@@ -54,8 +54,9 @@ typedef struct wh_t wh_t;
 //
 // Read buffer timeout constants
 //
-#define BUFFER_EMPTY_WAIT_TIME_MS 30
-#define MAX_N_CONSECUTIVE_WAITS 4
+#define BUFFER_EMPTY_WAIT_TIME_US_START 500
+#define BUFFER_EMPTY_WAIT_TIME_US_MAX (30 * 1000)
+#define BUFFER_EMPTY_THRESHOLD_B 20000
 
 //
 // Process flags
@@ -122,12 +123,13 @@ struct scap
 	char m_strerror_buf[SCAP_LASTERR_SIZE];
 
 	scap_threadinfo* m_proclist;
+	scap_mountinfo* m_dev_list;
 	scap_threadinfo m_fake_kernel_proc;
 	uint64_t m_evtcnt;
 	scap_addrlist* m_addrlist;
 	scap_machine_info m_machine_info;
 	scap_userlist* m_userlist;
-	uint32_t m_n_consecutive_waits;
+	uint64_t m_buffer_empty_wait_time_us;
 	proc_entry_callback m_proc_callback;
 	void* m_proc_callback_context;
 	struct ppm_proclist_info* m_driver_procinfo;
@@ -197,8 +199,10 @@ struct scap_ns_socket_list
 
 // Read the full event buffer for the given processor
 int32_t scap_readbuf(scap_t* handle, uint32_t proc, OUT char** buf, OUT uint32_t* len);
+// Read a single thread info from /proc
+int32_t scap_proc_read_thread(scap_t* handle, char* procdirname, uint64_t tid, struct scap_threadinfo** pi, char *error, bool scan_sockets);
 // Scan a directory containing process information
-int32_t scap_proc_scan_proc_dir(scap_t* handle, char* procdirname, int parenttid, int tid_to_scan, struct scap_threadinfo** pi, char *error, bool scan_sockets);
+int32_t scap_proc_scan_proc_dir(scap_t* handle, char* procdirname, char *error);
 // Remove an entry from the process list by parsing a PPME_PROC_EXIT event
 // void scap_proc_schedule_removal(scap_t* handle, scap_evt* e);
 // Remove the process that was scheduled for deletion for this handle

@@ -155,7 +155,7 @@ void json_spy_renderer::process_event_spy(sinsp_evt* evt, int32_t next_res)
 
 		if(!tinfo->m_container_id.empty())
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(container_info)
 			{
@@ -2292,7 +2292,7 @@ sysdig_table_action sinsp_cursesui::handle_textbox_input(int ch)
 					{
 						f = compiler.compile();
 					}
-					catch(sinsp_exception e)
+					catch(const sinsp_exception& e)
 					{
 						//
 						// Backup the cursor position

@@ -19,6 +19,7 @@ limitations under the License.
 
 #ifndef _WIN32
 #define __STDC_FORMAT_MACROS
+#include "sinsp_errno.h"
 #include <inttypes.h>
 #include <sys/socket.h>
 #include <algorithm>
@@ -128,6 +129,12 @@ sinsp_threadinfo* sinsp_evt::get_thread_info(bool query_os_if_not_found)
 {
 	if(NULL != m_tinfo)
 	{
+		return m_tinfo;
+	}
+	else if(m_tinfo_ref)
+	{
+		m_tinfo = m_tinfo_ref.get();
+
 		return m_tinfo;
 	}
 
@@ -1181,6 +1188,37 @@ Json::Value sinsp_evt::get_param_as_json(uint32_t id, OUT const char** resolved_
 
 			break;
 		}
+	case PT_MODE:
+		{
+			uint32_t val = *(uint32_t *)payload & (((uint64_t)1 << payload_len * 8) - 1);
+			ret["val"] = val;
+			ret["mode"] = Json::arrayValue;
+
+			const struct ppm_name_value *mode = (const struct ppm_name_value *)m_info->params[id].info;
+			uint32_t initial_val = val;
+
+			while(mode != NULL && mode->name != NULL && mode->value != initial_val)
+			{
+				// If mode is 0, then initial_val needs to be 0 for the mode to be resolved
+				if((mode->value == 0 && initial_val == 0) ||
+				   (mode->value != 0 && (val & mode->value) == mode->value && val != 0))
+				{
+					ret["mode"].append(mode->name);
+
+					// We remove current mode value to avoid duplicates
+					val &= ~mode->value;
+				}
+
+				mode++;
+			}
+
+			if(mode != NULL && mode->name != NULL)
+			{
+				ret["mode"].append(mode->name);
+			}
+
+			break;
+		}
 	case PT_UID:
 	case PT_GID:
 	{
@@ -1567,7 +1605,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 
 		sinsp_threadinfo* tinfo = get_thread_info();
 
-		if(tinfo)
+		if(tinfo && payload_len > 0)
 		{
 			if (strncmp(payload, "<NA>", 4) != 0)
 			{
@@ -1999,6 +2037,56 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 							  "%s%s",
 							  separator,
 							  flags->name);
+			}
+
+			break;
+		}
+	case PT_MODE:
+		{
+			uint32_t val = *(uint32_t *)payload;
+			SET_NUMERIC_FORMAT(prfmt, param_fmt, PRIo32, PRId32, PRIX32);
+			snprintf(&m_paramstr_storage[0],
+					m_paramstr_storage.size(),
+					prfmt, val);
+
+			const struct ppm_name_value *mode = (const struct ppm_name_value *)m_info->params[id].info;
+			const char *separator = "";
+			uint32_t initial_val = val;
+			uint32_t j = 0;
+
+			while(mode != NULL && mode->name != NULL && mode->value != initial_val)
+			{
+				// If mode is 0, then initial_val needs to be 0 for the mode to be resolved
+				if((mode->value == 0 && initial_val == 0) ||
+				   (mode->value != 0 && (val & mode->value) == mode->value && val != 0))
+				{
+					size_t params_len = j + strlen(separator) + strlen(mode->name);
+					if(m_resolved_paramstr_storage.size() < params_len)
+					{
+						m_resolved_paramstr_storage.resize(params_len + 1);
+					}
+
+					j += snprintf(&m_resolved_paramstr_storage[j],
+								m_resolved_paramstr_storage.size(),
+								"%s%s",
+								separator,
+								mode->name);
+
+					separator = "|";
+					// We remove current mode value to avoid duplicates
+					val &= ~mode->value;
+				}
+
+				mode++;
+			}
+
+			if(mode != NULL && mode->name != NULL)
+			{
+				j += snprintf(&m_resolved_paramstr_storage[j],
+							  m_resolved_paramstr_storage.size(),
+							  "%s%s",
+							  separator,
+							  mode->name);
 			}
 
 			break;
@@ -2494,7 +2582,7 @@ scap_dump_flags sinsp_evt::get_dump_flags(OUT bool* should_drop)
 }
 #endif
 
-bool sinsp_evt::falco_consider()
+bool sinsp_evt::simple_consumer_consider()
 {
 	uint16_t etype = get_type();
 
@@ -2504,8 +2592,51 @@ bool sinsp_evt::falco_consider()
 		ASSERT(parinfo->m_len == sizeof(uint16_t));
 		uint16_t scid = *(uint16_t *)parinfo->m_val;
 
-		return sinsp::falco_consider_syscallid(scid);
+		return sinsp::simple_consumer_consider_syscallid(scid);
 	}
 
-	return sinsp::falco_consider_evtnum(etype);
+	return sinsp::simple_consumer_consider_evtnum(etype);
+}
+
+bool sinsp_evt::is_syscall_error() const
+{
+	return (m_errorcode != 0) &&
+	       (m_errorcode != SE_EINPROGRESS) &&
+	       (m_errorcode != SE_EAGAIN) &&
+	       (m_errorcode != SE_ETIMEDOUT);
+}
+
+bool sinsp_evt::is_file_open_error() const
+{
+	return (m_fdinfo == nullptr) &&
+	       ((m_pevt->type == PPME_SYSCALL_OPEN_X) ||
+		(m_pevt->type == PPME_SYSCALL_CREAT_X) ||
+		(m_pevt->type == PPME_SYSCALL_OPENAT_X) ||
+		(m_pevt->type == PPME_SYSCALL_OPENAT_2_X));
+}
+
+bool sinsp_evt::is_file_error() const
+{
+	return is_file_open_error() ||
+	       ((m_fdinfo != nullptr) &&
+		((m_fdinfo->m_type == SCAP_FD_FILE) ||
+		 (m_fdinfo->m_type == SCAP_FD_FILE_V2)));
+}
+
+bool sinsp_evt::is_network_error() const
+{
+	if(m_fdinfo != nullptr)
+	{
+		return (m_fdinfo->m_type == SCAP_FD_IPV4_SOCK) ||
+		       (m_fdinfo->m_type == SCAP_FD_IPV6_SOCK);
+	}
+	else
+	{
+		return (m_pevt->type == PPME_SOCKET_ACCEPT_X) ||
+		       (m_pevt->type == PPME_SOCKET_ACCEPT4_X) ||
+		       (m_pevt->type == PPME_SOCKET_ACCEPT_5_X) ||
+		       (m_pevt->type == PPME_SOCKET_ACCEPT4_5_X) ||
+		       (m_pevt->type == PPME_SOCKET_CONNECT_X) ||
+		       (m_pevt->type == PPME_SOCKET_BIND_X);
+	}
 }

@@ -37,6 +37,10 @@ cmake_minimum_required(VERSION 2.8.2)
 
 project(sysdig)
 
+# Add path for custom CMake modules.
+list(APPEND CMAKE_MODULE_PATH
+	"${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
+
 if(NOT DEFINED SYSDIG_VERSION)
 	set(SYSDIG_VERSION "0.1.1dev")
 endif()
@@ -411,7 +415,7 @@ if(NOT WIN32)
 			DEPENDS openssl
 			URL "http://download.draios.com/dependencies/curl-7.61.0.tar.bz2"
 			URL_MD5 "31d0a9f48dc796a7db351898a1e5058a"
-			CONFIGURE_COMMAND ./configure ${CURL_SSL_OPTION} --disable-threaded-resolver --disable-shared --enable-optimize --disable-curldebug --disable-rt --enable-http --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smb --disable-smtp --disable-gopher --disable-sspi --disable-ntlm-wb --disable-tls-srp --without-winssl --without-darwinssl --without-polarssl --without-cyassl --without-nss --without-axtls --without-ca-path --without-ca-bundle --without-libmetalink --without-librtmp --without-winidn --without-libidn --without-libidn2 --without-nghttp2 --without-libssh2
+			CONFIGURE_COMMAND ./configure ${CURL_SSL_OPTION} --disable-threaded-resolver --disable-shared --enable-optimize --disable-curldebug --disable-rt --enable-http --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smb --disable-smtp --disable-gopher --disable-sspi --disable-ntlm-wb --disable-tls-srp --without-winssl --without-darwinssl --without-polarssl --without-cyassl --without-nss --without-axtls --without-ca-path --without-ca-bundle --without-libmetalink --without-librtmp --without-winidn --without-libidn --without-libidn2 --without-nghttp2 --without-libssh2  --without-libpsl
 			BUILD_COMMAND ${CMD_MAKE}
 			BUILD_IN_SOURCE 1
 			BUILD_BYPRODUCTS ${CURL_LIBRARIES}
@@ -495,6 +499,11 @@ if(NOT WIN32 AND NOT APPLE)
 			message(FATAL_ERROR "System grpc_cpp_plugin not found")
 		endif()
 	else()
+		find_package(PkgConfig)
+		if(NOT PKG_CONFIG_FOUND)
+			message(FATAL_ERROR "pkg-config binary not found")
+		endif()
+		message(STATUS "Found pkg-config executable: ${PKG_CONFIG_EXECUTABLE}")
 		set(GRPC_SRC "${PROJECT_BINARY_DIR}/grpc-prefix/src/grpc")
 		message(STATUS "Using bundled grpc in '${GRPC_SRC}'")
 		set(GRPC_INCLUDE "${GRPC_SRC}/include")
@@ -510,20 +519,65 @@ if(NOT WIN32 AND NOT APPLE)
 		URL_MD5 "2fc42c182a0ed1b48ad77397f76bb3bc"
 		CONFIGURE_COMMAND ""
 		# TODO what if using system openssl, protobuf or cares?
-		BUILD_COMMAND CFLAGS=-Wno-implicit-fallthrough HAS_SYSTEM_ZLIB=false LDFLAGS=-static PATH=${PROTOC_DIR}:$ENV{PATH} PKG_CONFIG_PATH=${OPENSSL_BUNDLE_DIR}:${PROTOBUF_SRC}:${CARES_SRC} make grpc_cpp_plugin static_cxx static_c
+		BUILD_COMMAND CFLAGS=-Wno-implicit-fallthrough HAS_SYSTEM_ZLIB=false LDFLAGS=-static PATH=${PROTOC_DIR}:$ENV{PATH} PKG_CONFIG_PATH=${OPENSSL_BUNDLE_DIR}:${PROTOBUF_SRC}:${CARES_SRC} PKG_CONFIG=${PKG_CONFIG_EXECUTABLE} make grpc_cpp_plugin static_cxx static_c
 		BUILD_IN_SOURCE 1
 		BUILD_BYPRODUCTS ${GRPC_LIB} ${GRPCPP_LIB}
 		# TODO s390x support
 		# TODO what if using system zlib
-		PATCH_COMMAND rm -rf third_party/zlib && ln -s ${ZLIB_SRC} third_party/zlib && wget https://download.sysdig.com/dependencies/grpc-1.1.4-Makefile.patch && patch < grpc-1.1.4-Makefile.patch
+		PATCH_COMMAND rm -rf third_party/zlib && ln -s ${ZLIB_SRC} third_party/zlib && wget https://download.sysdig.com/dependencies/grpc-1.8.1-Makefile.patch && patch < grpc-1.8.1-Makefile.patch
 		INSTALL_COMMAND "")
 	endif()
-endif()
+endif() # NOT WIN32 AND NOT APPLE
+
+option(CREATE_TEST_TARGETS "Enable make-targets for unit testing" ON)
+if(CREATE_TEST_TARGETS AND NOT WIN32)
+	option(USE_BUNDLED_GTEST "Enable building of the bundled gtest" ${USE_BUNDLED_DEPS})
+	if(NOT USE_BUNDLED_GTEST)
+		find_path(GTEST_INCLUDE_DIR NAMES gtest.h)
+		find_library(GTEST_MAIN_LIB NAMES gtest_main)
+	else()
+		# https://github.com/google/googletest/tree/master/googletest#incorporating-into-an-existing-cmake-project
+		# Download and unpack googletest at configure time
+		configure_file(CMakeListsGtestInclude.cmake googletest-download/CMakeLists.txt)
+		execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
+			RESULT_VARIABLE result
+			WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/googletest-download )
+		if(result)
+			message(FATAL_ERROR "CMake step for googletest failed: ${result}")
+		endif()
+		execute_process(COMMAND ${CMAKE_COMMAND} --build .
+			RESULT_VARIABLE result
+			WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/googletest-download )
+		if(result)
+			message(FATAL_ERROR "Build step for googletest failed: ${result}")
+		endif()
+
+		# Add googletest directly to our build. This defines
+		# the gtest and gtest_main targets.
+		add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/googletest-src
+		                 ${CMAKE_CURRENT_BINARY_DIR}/googletest-build
+		                 EXCLUDE_FROM_ALL)
+
+		set(GTEST_INCLUDE_DIR "${gtest_SOURCE_DIR}/include/gtest")
+		set(GTEST_MAIN_LIB "gtest_main")
+	endif()
+endif() # NOT WIN32
 
 add_subdirectory(userspace/sysdig)
 add_subdirectory(userspace/libscap)
 add_subdirectory(userspace/libsinsp)
-#add_subdirectory(userspace/falcobl)
+
+if(CREATE_TEST_TARGETS AND NOT WIN32)
+		# Add unit test directories
+		add_subdirectory(userspace/libsinsp/test)
+
+		# Add command to run all unit tests at once via the make system.
+		# This is preferred vs using ctest's add_test because it will build
+		# the code and output to stdout.
+		add_custom_target(run-unit-tests
+			COMMAND $(MAKE) run-unit-test-libsinsp
+		)
+endif()
 
 set(CPACK_PACKAGE_NAME "${PACKAGE_NAME}")
 set(CPACK_PACKAGE_VENDOR "Sysdig Inc.")

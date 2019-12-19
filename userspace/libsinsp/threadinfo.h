@@ -120,7 +120,7 @@ public:
 	  \brief Get the main thread of the process containing this thread.
 	*/
 #ifndef _WIN32
-	inline sinsp_threadinfo* get_main_thread()
+	inline sinsp_threadinfo* get_main_thread() 
 	{
 		auto main_thread = m_main_thread.lock();
 		if(!main_thread)
@@ -226,6 +226,11 @@ public:
 	*/
 	uint64_t get_fd_limit();
 
+	/*!
+	  \brief Return the cgroup name for a specific subsystem
+	 */
+	 const std::string& get_cgroup(const std::string& subsys) const;
+
 	//
 	// Walk up the parent process hierarchy, calling the provided
 	// function for each node. If the function returns false, the
@@ -235,6 +240,10 @@ public:
 	void traverse_parent_state(visitor_func_t &visitor);
 
 	static void populate_cmdline(std::string &cmdline, sinsp_threadinfo *tinfo);
+
+	// Return true if this thread is a part of a healthcheck,
+	// readiness probe, or liveness probe.
+	bool is_health_probe();
 
 	//
 	// Core state
@@ -264,13 +273,28 @@ public:
 	int64_t m_vpid; ///< The virtual id of the process containing this thread. In single thread threads, this is equal to vtid.
 	int64_t m_vpgid; // The virtual process group id, as seen from its pid namespace
 	std::string m_root;
-	size_t m_program_hash;
-	size_t m_program_hash_falco;
+	size_t m_program_hash; ///< Unique hash of the current program
+	size_t m_program_hash_scripts;  ///< Unique hash of the current program, including arguments for scripting programs (like python or ruby)
 	int32_t m_tty;
 	int32_t m_loginuid; ///< loginuid (auid)
 
-	// If true, this thread is part of a container health check
-	bool m_is_container_healthcheck;
+	// In some cases, a threadinfo has a category that identfies
+	// why it was run. Descriptions:
+	// CAT_NONE: no specific category
+	// CAT_CONTAINER: a process run in a container and *not* any
+	//                of the following more specific categories.
+	// CAT_HEALTHCHECK: part of a container healthcheck
+	// CAT_LIVENESS_PROBE: part of a k8s liveness probe
+	// CAT_READINESS_PROBE: part of a k8s readiness probe
+	enum command_category {
+		CAT_NONE = 0,
+		CAT_CONTAINER,
+		CAT_HEALTHCHECK,
+		CAT_LIVENESS_PROBE,
+		CAT_READINESS_PROBE
+	};
+
+	command_category m_category;
 
 	//
 	// State for multi-event processing
@@ -313,6 +337,21 @@ public:
 	// Global state
 	//
 	sinsp *m_inspector;
+
+public: // types required for use in sets
+	struct hasher {
+		size_t operator()(sinsp_threadinfo* tinfo) const
+		{
+			return tinfo->get_main_thread()->m_program_hash;
+		}
+	};
+
+	struct comparer {
+		size_t operator()(sinsp_threadinfo* lhs, sinsp_threadinfo* rhs) const
+		{
+			return lhs->get_main_thread()->m_program_hash == rhs->get_main_thread()->m_program_hash;
+		}
+	};
 
 VISIBILITY_PRIVATE
 	void init();

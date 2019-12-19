@@ -20,7 +20,12 @@ limitations under the License.
 #pragma once
 
 #include <functional>
+#include <memory>
+#include <unordered_map>
 
+#include "scap.h"
+
+#include "event.h"
 #include "container_info.h"
 
 #if !defined(_WIN32) && !defined(CYGWING_AGENT) && defined(HAS_CAPTURE)
@@ -29,32 +34,91 @@ limitations under the License.
 #include <curl/multi.h>
 #endif
 
-class sinsp_container_manager
+#include "container_engine/container_cache_interface.h"
+#include "container_engine/container_engine_base.h"
+#include "container_engine/sinsp_container_type.h"
+#include "mutex.h"
+
+class sinsp_container_manager :
+	public libsinsp::container_engine::container_cache_interface
 {
 public:
+	using map_ptr_t = libsinsp::ConstMutexGuard<std::unordered_map<std::string, sinsp_container_info::ptr_t>>;
+
 	sinsp_container_manager(sinsp* inspector);
 	virtual ~sinsp_container_manager();
 
-	const unordered_map<string, sinsp_container_info>* get_containers();
+	/**
+	 * @brief Get the whole container map (read-only)
+	 * @return the map of container_id -> shared_ptr<container_info>
+	 */
+	map_ptr_t get_containers() const;
 	bool remove_inactive_containers();
-	void add_container(const sinsp_container_info& container_info, sinsp_threadinfo *thread);
-	sinsp_container_info * get_container(const string &id);
-	void notify_new_container(const sinsp_container_info& container_info, int64_t tid);
-	template<typename E> bool resolve_container_impl(sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
-	template<typename E1, typename E2, typename... Args> bool resolve_container_impl(sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
+
+	/**
+	 * @brief Add/update a container in the manager map, executing on_new_container callbacks
+	 *
+	 * @param container_info shared_ptr owning the container_info to add/update
+	 * @param thread a thread in the container, only passed to callbacks
+	 */
+	void add_container(const sinsp_container_info::ptr_t& container_info, sinsp_threadinfo *thread) override;
+
+	/**
+	 * @brief Update a container by replacing its entry with a new one
+	 *
+	 * Does not call on_new_container callbacks
+	 *
+	 * @param container_info shared_ptr owning the updated container_info
+	 */
+	void replace_container(const sinsp_container_info::ptr_t& container_info) override;
+
+	/**
+	 * @brief Get a container_info by container id
+	 * @param id the id of the container to look up
+	 * @return a const pointer to the container_info
+	 *
+	 * Note: you cannot modify the returned object in any way, to update
+	 * the container, get a new shared_ptr<sinsp_container_info> and pass it
+	 * to replace_container()
+	 */
+	sinsp_container_info::ptr_t get_container(const std::string &id) const override;
+
+	/**
+	 * @brief Generate container JSON event from a new container
+	 * @param container_info reference to the new sinsp_container_info
+	 *
+	 * Note: this is unrelated to on_new_container callbacks even though
+	 * both happen during container creation
+	 */
+	void notify_new_container(const sinsp_container_info& container_info) override;
+
+	/**
+	 * @brief Detect container engine for a thread
+	 * @param tinfo the thread to do container detection for
+	 * @param query_os_for_missing_info should we consult external data sources?
+	 * 		if true, we're working with a live capture and should
+	 * 		query the OS (external files, daemons etc.); if false,
+	 * 		we're reading a scap file so only rely on the thread info itself
+	 * @return true if we have successfully determined the container engine,
+	 * 		false otherwise
+	 *
+	 * Note: a return value of false doesn't mean that container detection failed,
+	 * it may still be happening in the background asynchronously
+	 */
 	bool resolve_container(sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
 	void dump_containers(scap_dumper_t* dumper);
-	string get_container_name(sinsp_threadinfo* tinfo);
+	std::string get_container_name(sinsp_threadinfo* tinfo) const;
 
-	// Set tinfo's is_container_healthcheck attribute to true if
-	// it is identified as a container healthcheck. It will *not*
-	// set it to false by default, so a threadinfo that is
-	// initially identified as a health check will remain one
+	// Set tinfo's m_category based on the container context.  It
+	// will *not* change any category to NONE, so a threadinfo
+	// that initially has a category will retain its category
 	// across execs e.g. "sh -c /bin/true" execing /bin/true.
-	void identify_healthcheck(sinsp_threadinfo *tinfo);
+	void identify_category(sinsp_threadinfo *tinfo);
 
-	bool container_exists(const string& container_id) const {
-		return m_containers.find(container_id) != m_containers.end();
+	bool container_exists(const std::string& container_id) const override{
+		auto containers = m_containers.lock();
+		return containers->find(container_id) != containers->end() ||
+			m_lookups.find(container_id) != m_lookups.end();
 	}
 
 	typedef std::function<void(const sinsp_container_info&, sinsp_threadinfo *)> new_container_cb;
@@ -62,38 +126,76 @@ public:
 	void subscribe_on_new_container(new_container_cb callback);
 	void subscribe_on_remove_container(remove_container_cb callback);
 
+	void create_engines();
+
+	/**
+	 * Update the container_info associated with the given type and container_id
+	 * to include the size of the container layer. This is not filled in the
+	 * initial request because it can easily take seconds.
+	 */
+	void update_container_with_size(sinsp_container_type type,
+					const std::string& container_id);
 	void cleanup();
 
+	void set_docker_socket_path(std::string socket_path);
 	void set_query_docker_image_info(bool query_image_info);
 	void set_cri_extra_queries(bool extra_queries);
 	void set_cri_socket_path(const std::string& path);
 	void set_cri_timeout(int64_t timeout_ms);
+	void set_cri_async(bool async);
+	void set_cri_delay(uint64_t delay_ms);
 	sinsp* get_inspector() { return m_inspector; }
+
+	/**
+	 * \brief set the status of an async container metadata lookup
+	 * @param container_id the container id we're looking up
+	 * @param ctype the container engine that is doing the lookup
+	 * @param state the state of the lookup
+	 *
+	 * Container engines that do not do any lookups in external services need not
+	 * bother with this. Otherwise, the engine needs to maintain the current
+	 * state of the lookup via this method and call should_lookup() before
+	 * starting a new lookup.
+	 */
+	void set_lookup_status(const std::string& container_id, sinsp_container_type ctype, sinsp_container_lookup_state state) override
+	{
+		m_lookups[container_id][ctype] = state;
+	}
+
+	/**
+	 * \brief do we want to start a new lookup for container metadata?
+	 * @param container_id the container id we want to look up
+	 * @param ctype the container engine that is doing the lookup
+	 * @return true if there's no lookup in progress and we're free to start
+	 * a new one, false otherwise
+	 *
+	 * This method effectively checks if m_lookups[container_id][ctype]
+	 * exists, without creating unnecessary map entries along the way.
+	 */
+	bool should_lookup(const std::string& container_id, sinsp_container_type ctype) override
+	{
+		auto container_lookups = m_lookups.find(container_id);
+		if(container_lookups == m_lookups.end())
+		{
+			return true;
+		}
+		auto engine_lookup = container_lookups->second.find(ctype);
+		return engine_lookup == container_lookups->second.end();
+	}
 private:
-	string container_to_json(const sinsp_container_info& container_info);
-	bool container_to_sinsp_event(const string& json, sinsp_evt* evt, int64_t tid=0);
-	string get_docker_env(const Json::Value &env_vars, const string &mti);
+	std::string container_to_json(const sinsp_container_info& container_info);
+	bool container_to_sinsp_event(const std::string& json, sinsp_evt* evt, std::shared_ptr<sinsp_threadinfo> tinfo);
+	std::string get_docker_env(const Json::Value &env_vars, const std::string &mti);
+
+	std::list<std::shared_ptr<libsinsp::container_engine::container_engine_base>> m_container_engines;
+	std::map<sinsp_container_type, std::shared_ptr<libsinsp::container_engine::container_engine_base>> m_container_engine_by_type;
 
 	sinsp* m_inspector;
-	unordered_map<string, sinsp_container_info> m_containers;
+	libsinsp::Mutex<std::unordered_map<std::string, std::shared_ptr<const sinsp_container_info>>> m_containers;
+	std::unordered_map<std::string, std::unordered_map<sinsp_container_type, sinsp_container_lookup_state>> m_lookups;
 	uint64_t m_last_flush_time_ns;
-	list<new_container_cb> m_new_callbacks;
-	list<remove_container_cb> m_remove_callbacks;
+	std::list<new_container_cb> m_new_callbacks;
+	std::list<remove_container_cb> m_remove_callbacks;
 
 	friend class test_helper;
 };
-
-template<typename E> bool sinsp_container_manager::resolve_container_impl(sinsp_threadinfo* tinfo, bool query_os_for_missing_info)
-{
-	E engine;
-	return engine.resolve(this, tinfo, query_os_for_missing_info);
-}
-
-template<typename E1, typename E2, typename... Args> bool sinsp_container_manager::resolve_container_impl(sinsp_threadinfo* tinfo, bool query_os_for_missing_info)
-{
-	if (resolve_container_impl<E1>(tinfo, query_os_for_missing_info))
-	{
-		return true;
-	}
-	return resolve_container_impl<E2, Args...>(tinfo, query_os_for_missing_info);
-}

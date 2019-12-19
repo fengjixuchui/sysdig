@@ -74,6 +74,7 @@ struct ppm_consumer_t {
 	struct list_head node;
 	uint16_t fullcapture_port_range_start;
 	uint16_t fullcapture_port_range_end;
+	uint16_t statsd_port;
 };
 
 #define STR_STORAGE_SIZE PAGE_SIZE
@@ -112,5 +113,7 @@ extern const enum ppm_syscall_code g_syscall_code_routing_table[];
 extern const struct syscall_evt_pair g_syscall_ia32_table[];
 extern const enum ppm_syscall_code g_syscall_ia32_code_routing_table[];
 #endif
+
+extern void ppm_syscall_get_arguments(struct task_struct *task, struct pt_regs *regs, unsigned long *args);
 
 #endif /* PPM_H_ */

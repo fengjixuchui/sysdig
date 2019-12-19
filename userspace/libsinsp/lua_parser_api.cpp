@@ -79,6 +79,10 @@ static cmpop string_to_cmpop(const char* str)
 	{
 		return CO_IN;
 	}
+	else if(strcmp(str, "intersects") == 0)
+	{
+		return CO_INTERSECTS;
+	}
 	else if(strcmp(str, "pmatch") == 0)
 	{
 		return CO_PMATCH;
@@ -137,7 +141,7 @@ int lua_parser_cbacks::nest(lua_State *ls)
 		parser->m_last_boolop = BO_NONE;
 		parser->m_have_rel_expr = false;
 	}
-	catch (exception &e)
+	catch (const std::exception& e)
 	{
 		lua_pushstring(ls, e.what());
 		lua_error(ls);
@@ -163,7 +167,7 @@ int lua_parser_cbacks::unnest(lua_State *ls)
 		filter->pop_expression();
 		parser->m_nest_level--;
 	}
-	catch (exception &e)
+	catch (const std::exception& e)
 	{
 		lua_pushstring(ls, e.what());
 		lua_error(ls);
@@ -207,7 +211,7 @@ int lua_parser_cbacks::bool_op(lua_State *ls)
 		parser->m_last_boolop = op;
 
 	}
-	catch (exception &e)
+	catch (const std::exception& e)
 	{
 		lua_pushstring(ls, e.what());
 		lua_error(ls);
@@ -253,7 +257,9 @@ int lua_parser_cbacks::rel_expr(lua_State *ls)
 		// "exists" is the only unary comparison op
 		if(strcmp(cmpop, "exists"))
 		{
-			if (strcmp(cmpop, "in") == 0 || strcmp(cmpop, "pmatch") == 0)
+			if (strcmp(cmpop, "in") == 0 ||
+			    strcmp(cmpop, "intersects") == 0 ||
+			    strcmp(cmpop, "pmatch") == 0)
 			{
 				if (!lua_istable(ls, 4))
 				{
@@ -296,7 +302,7 @@ int lua_parser_cbacks::rel_expr(lua_State *ls)
 		filter->add_check(chk);
 
 	}
-	catch (exception &e)
+	catch (const std::exception& e)
 	{
 		lua_pushstring(ls, e.what());
 		lua_error(ls);

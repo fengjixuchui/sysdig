@@ -21,23 +21,25 @@ limitations under the License.
 
 #include <cstdint>
 #include <map>
+#include <memory>
+#include <list>
 #include <string>
 #include <vector>
-
+#include "container_engine/sinsp_container_type.h"
 #include "json/json.h"
 
-enum sinsp_container_type
-{
-	CT_DOCKER = 0,
-	CT_LXC = 1,
-	CT_LIBVIRT_LXC = 2,
-	CT_MESOS = 3,
-	CT_RKT = 4,
-	CT_CUSTOM = 5,
-	CT_CRI = 6,
-	CT_CONTAINERD = 7,
-	CT_CRIO = 8,
+class sinsp;
+class sinsp_threadinfo;
+
+namespace std {
+template<> struct hash<sinsp_container_type> {
+	std::size_t operator()(const sinsp_container_type& h) const {
+		return std::hash<int>{}(static_cast<int>(h));
+	}
 };
+}
+
+class sinsp_threadinfo;
 
 // Docker and CRI-compatible runtimes are very similar
 static inline bool is_docker_compatible(sinsp_container_type t)
@@ -48,9 +50,28 @@ static inline bool is_docker_compatible(sinsp_container_type t)
 		t == CT_CRIO;
 }
 
+/**
+ * \brief the state of a container metadata lookup
+ *
+ * Some container engines (Docker, CRI) do external API calls to find container
+ * metadata. This value stores the state of the lookup (a separate value is kept
+ * for each container_id/engine pair). The purpose is to avoid repeated lookups
+ * after failure, especially when multiple engines match against the same process
+ * (e.g. Docker and containerd may use the same cgroup layout).
+ *
+ * If all engines fail to find metadata for a container, we need to remember that
+ * for each engine individually and there's only one sinsp_container_info->m_type
+ */
+enum class sinsp_container_lookup_state {
+	STARTED = 0,
+	SUCCESSFUL = 1,
+	FAILED = 2
+};
+
 class sinsp_container_info
 {
 public:
+	using ptr_t = std::shared_ptr<const sinsp_container_info>;
 
 	class container_port_mapping
 	{
@@ -124,6 +145,48 @@ public:
 		std::string m_propagation;
 	};
 
+	class container_health_probe
+	{
+	public:
+
+		// The type of health probe
+		enum probe_type {
+			PT_NONE = 0,
+			PT_HEALTHCHECK,
+			PT_LIVENESS_PROBE,
+			PT_READINESS_PROBE,
+			PT_END
+		};
+
+		// String representations of the above, suitable for
+		// parsing to/from json. Should be kept in sync with
+		// probe_type enum.
+		static std::vector<std::string> probe_type_names;
+
+		// Parse any health probes out of the provided
+		// container json, updating the list of probes.
+		static void parse_health_probes(const Json::Value &config_obj,
+						std::list<container_health_probe> &probes);
+
+		// Serialize the list of health probes, adding to the provided json object
+		static void add_health_probes(const std::list<container_health_probe> &probes,
+					      Json::Value &config_obj);
+
+		container_health_probe();
+		container_health_probe(const probe_type probe_type,
+				       const std::string &&exe,
+				       const std::vector<std::string> &&args);
+		virtual ~container_health_probe();
+
+		// The probe_type that should be used for commands
+		// matching this health probe.
+		probe_type m_probe_type;
+
+		// The actual health probe exe and args.
+		std::string m_health_probe_exe;
+		std::vector<std::string> m_health_probe_args;
+	};
+
 	sinsp_container_info():
 		m_container_ip(0),
 		m_privileged(false),
@@ -132,16 +195,14 @@ public:
 		m_cpu_shares(1024),
 		m_cpu_quota(0),
 		m_cpu_period(100000),
-		m_has_healthcheck(false),
-		m_healthcheck_exe(""),
+		m_cpuset_cpu_count(0),
 		m_is_pod_sandbox(false),
-		m_metadata_complete(true),
-		m_metadata_deadline(0)
+		m_lookup_state(sinsp_container_lookup_state::SUCCESSFUL),
+		m_metadata_deadline(0),
+		m_size_rw_bytes(-1),
+		m_size_root_fs_bytes(-1)
 	{
 	}
-
-	std::string normalize_healthcheck_arg(const std::string &arg);
-	void parse_healthcheck(const Json::Value &config_obj);
 
 	const std::vector<std::string>& get_env() const { return m_env; }
 
@@ -152,6 +213,15 @@ public:
 	bool is_pod_sandbox() const {
 		return m_is_pod_sandbox;
 	}
+
+	bool is_successful() const {
+		return m_lookup_state == sinsp_container_lookup_state::SUCCESSFUL;
+	}
+
+	std::shared_ptr<sinsp_threadinfo> get_tinfo(sinsp* inspector) const;
+
+	// Match a process against the set of health probes
+	container_health_probe::probe_type match_health_probe(sinsp_threadinfo *tinfo) const;
 
 	std::string m_id;
 	sinsp_container_type m_type;
@@ -173,18 +243,26 @@ public:
 	int64_t m_cpu_shares;
 	int64_t m_cpu_quota;
 	int64_t m_cpu_period;
-	Json::Value m_healthcheck_obj;
-	bool m_has_healthcheck;
-	std::string m_healthcheck_exe;
-	std::vector<std::string> m_healthcheck_args;
+	int32_t m_cpuset_cpu_count;
+	std::list<container_health_probe> m_health_probes;
+
 	bool m_is_pod_sandbox;
 
-	// If false, this represents incomplete information about the
-	// container that will be filled in later as a result of an
-	// async fetch of container info.
-	bool m_metadata_complete;
+	sinsp_container_lookup_state m_lookup_state;
 #ifdef HAS_ANALYZER
 	std::string m_sysdig_agent_conf;
 #endif
 	uint64_t m_metadata_deadline;
+
+	/**
+	 * The size of files that have been created or changed by this container.
+	 * This is not filled by default.
+	 */
+	int64_t m_size_rw_bytes;
+
+	/**
+	 * The total size of all the files in this container. This is not filled by
+	 * default.
+	 */
+	int64_t m_size_root_fs_bytes;
 };

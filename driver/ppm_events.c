@@ -38,6 +38,7 @@ or GPL2.txt for full copies of the license.
 #include "ppm_events.h"
 #include "ppm.h"
 #include "ppm_flag_helpers.h"
+#include "ppm_version.h"
 
 /*
  * The kernel patched with grsecurity makes the default access_ok trigger a
@@ -46,10 +47,10 @@ or GPL2.txt for full copies of the license.
 #ifdef access_ok_noprefault
 #define ppm_access_ok access_ok_noprefault
 #else
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
-#define ppm_access_ok(type, addr, size)	access_ok(type, addr, size)
-#else
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)) || (PPM_RHEL_RELEASE_CODE > 0 && PPM_RHEL_RELEASE_CODE >= PPM_RHEL_RELEASE_VERSION(8, 1))
 #define ppm_access_ok(type, addr, size)	access_ok(addr, size)
+#else
+#define ppm_access_ok(type, addr, size)	access_ok(type, addr, size)
 #endif
 #endif
 
@@ -61,6 +62,11 @@ static void memory_dump(char *p, size_t size)
 
 	for (j = 0; j < size; j += 8)
 		pr_info("%*ph\n", 8, &p[j]);
+}
+
+static inline bool in_port_range(uint16_t port, uint16_t min, uint16_t max)
+{
+	return port >= min && port <= max;
 }
 
 /*
@@ -244,14 +250,16 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 			if (err == 0) {
 				if(args->event_type == PPME_SOCKET_SENDTO_X)
 				{
+					unsigned long syscall_args[6] = {};
 					unsigned long val;
 					struct sockaddr __user * usrsockaddr;
 					/*
 					 * Get the address
 					 */
-					if (!args->is_socketcall)
-						syscall_get_arguments(current, args->regs, 4, 1, &val);
-					else
+					if (!args->is_socketcall) {
+						ppm_syscall_get_arguments(current, args->regs, syscall_args);
+						val = syscall_args[4];
+					} else
 						val = args->socketcall_args[4];
 
 					usrsockaddr = (struct sockaddr __user *)val;
@@ -265,9 +273,10 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 						/*
 						 * Get the address len
 						 */
-						if (!args->is_socketcall)
-							syscall_get_arguments(current, args->regs, 5, 1, &val);
-						else
+						if (!args->is_socketcall) {
+							ppm_syscall_get_arguments(current, args->regs, syscall_args);
+							val = syscall_args[5];
+						} else
 							val = args->socketcall_args[5];
 
 						if (val != 0) {
@@ -283,6 +292,7 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 						}
 					}
 				} else if (args->event_type == PPME_SOCKET_SENDMSG_X) {
+					unsigned long syscall_args[6] = {};
 					unsigned long val;
 					struct sockaddr __user * usrsockaddr;
 					int addrlen;
@@ -295,9 +305,10 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 					struct msghdr mh;
 #endif
 
-					if (!args->is_socketcall)
-						syscall_get_arguments(current, args->regs, 1, 1, &val);
-					else
+					if (!args->is_socketcall) {
+						ppm_syscall_get_arguments(current, args->regs, syscall_args);
+						val = syscall_args[1];
+					} else
 						val = args->socketcall_args[1];
 
 #ifdef CONFIG_COMPAT
@@ -336,6 +347,8 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 					err = sock_getname(sock, (struct sockaddr *)&peer_address, 1);
 
 				if (err == 0) {
+					uint16_t min_port = args->consumer->fullcapture_port_range_start;
+					uint16_t max_port = args->consumer->fullcapture_port_range_end;
 					family = sock->sk->sk_family;
 
 					if (family == AF_INET) {
@@ -349,7 +362,16 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 						dport = 0;
 					}
 
-					if (sport == PPM_PORT_MYSQL || dport == PPM_PORT_MYSQL) {
+					if (max_port > 0 &&
+						(in_port_range(sport, min_port, max_port) ||
+						 in_port_range(dport, min_port, max_port))) {
+						/*
+						 * Before checking the well-known ports, see if the user has requested
+						 * an increased snaplen for the port in question.
+						 */
+						sockfd_put(sock);
+						return RW_MAX_FULLCAPTURE_PORT_SNAPLEN;
+					} else if (sport == PPM_PORT_MYSQL || dport == PPM_PORT_MYSQL) {
 						if (lookahead_size >= 5) {
 							if (buf[0] == 3 || buf[1] == 3 || buf[2] == 3 || buf[3] == 3 || buf[4] == 3) {
 								sockfd_put(sock);
@@ -362,7 +384,7 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 					} else if (sport == PPM_PORT_POSTGRES || dport == PPM_PORT_POSTGRES) {
 						if (lookahead_size >= 2) {
 							if ((buf[0] == 'Q' && buf[1] == 0) || /* SimpleQuery command */
-								(buf[0] == 'P' && buf[1] == 0) || /* Prepare statement commmand */
+								(buf[0] == 'P' && buf[1] == 0) || /* Prepare statement command */
 								(buf[4] == 0 && buf[5] == 3 && buf[6] == 0) || /* startup command */
 								(buf[0] == 'E' && buf[1] == 0) /* error or execute command */
 							) {
@@ -383,18 +405,9 @@ inline u32 compute_snaplen(struct event_filler_arguments *args, char *buf, u32 l
 							) {
 						sockfd_put(sock);
 						return 2000;
-					} else if (dport == PPM_PORT_STATSD) {
+					} else if (dport == args->consumer->statsd_port) {
 						sockfd_put(sock);
 						return 2000;
-					} else if (args->consumer->fullcapture_port_range_end != 0 &&
-								((sport >= args->consumer->fullcapture_port_range_start && sport <= args->consumer->fullcapture_port_range_end) ||
-								(dport >= args->consumer->fullcapture_port_range_start && dport <= args->consumer->fullcapture_port_range_end)
-							)) {
-						/*
-						 * mpegts detection
-						 */
-						sockfd_put(sock);
-						return RW_MAX_FULLCAPTURE_PORT_SNAPLEN;
 					} else {
 						if (lookahead_size >= 5) {
 							if (*(u32 *)buf == g_http_get_intval ||
@@ -645,6 +658,7 @@ int val_to_ring(struct event_filler_arguments *args, uint64_t val, u32 val_len, 
 		break;
 	case PT_FLAGS32:
 	case PT_UINT32:
+	case PT_MODE:
 	case PT_UID:
 	case PT_GID:
 	case PT_SIGSET:
@@ -1100,17 +1114,21 @@ int32_t parse_readv_writev_bufs(struct event_filler_arguments *args, const struc
 {
 	int32_t res;
 	const struct iovec *iov;
-	u32 copylen;
+	u64 copylen;
 	u32 j;
 	u64 size = 0;
 	unsigned long bufsize;
 	char *targetbuf = args->str_storage;
 	u32 targetbuflen = STR_STORAGE_SIZE;
+	unsigned long syscall_args[6] = {};
 	unsigned long val;
 	u32 notcopied_len;
 	size_t tocopy_len;
 
 	copylen = iovcnt * sizeof(struct iovec);
+
+	if (unlikely(iovcnt >= 0xffffffff))
+		return PPM_FAILURE_BUFFER_FULL;
 
 	if (unlikely(copylen >= STR_STORAGE_SIZE))
 		return PPM_FAILURE_BUFFER_FULL;
@@ -1151,9 +1169,10 @@ int32_t parse_readv_writev_bufs(struct event_filler_arguments *args, const struc
 			/*
 			 * Retrieve the FD. It will be used for dynamic snaplen calculation.
 			 */
-			if (!args->is_socketcall)
-				syscall_get_arguments(current, args->regs, 0, 1, &val);
-			else
+			if (!args->is_socketcall) {
+				ppm_syscall_get_arguments(current, args->regs, syscall_args);
+				val = syscall_args[0];
+			} else
 				val = args->socketcall_args[0];
 			args->fd = (int)val;
 
@@ -1231,17 +1250,21 @@ int32_t compat_parse_readv_writev_bufs(struct event_filler_arguments *args, cons
 {
 	int32_t res;
 	const struct compat_iovec *iov;
-	u32 copylen;
+	u64 copylen;
 	u32 j;
 	u64 size = 0;
 	unsigned long bufsize;
 	char *targetbuf = args->str_storage;
 	u32 targetbuflen = STR_STORAGE_SIZE;
+	unsigned long syscall_args[6] = {};
 	unsigned long val;
 	u32 notcopied_len;
 	compat_size_t tocopy_len;
 
 	copylen = iovcnt * sizeof(struct compat_iovec);
+
+	if (unlikely(iovcnt >= 0xffffffff))
+		return PPM_FAILURE_BUFFER_FULL;
 
 	if (unlikely(copylen >= STR_STORAGE_SIZE))
 		return PPM_FAILURE_BUFFER_FULL;
@@ -1282,9 +1305,10 @@ int32_t compat_parse_readv_writev_bufs(struct event_filler_arguments *args, cons
 			/*
 			 * Retrieve the FD. It will be used for dynamic snaplen calculation.
 			 */
-			if (!args->is_socketcall)
-				syscall_get_arguments(current, args->regs, 0, 1, &val);
-			else
+			if (!args->is_socketcall) {
+				ppm_syscall_get_arguments(current, args->regs, syscall_args);
+				val = syscall_args[0];
+			} else
 				val = args->socketcall_args[0];
 			args->fd = (int)val;
 
@@ -1368,6 +1392,7 @@ int32_t compat_parse_readv_writev_bufs(struct event_filler_arguments *args, cons
 int f_sys_autofill(struct event_filler_arguments *args)
 {
 	int res;
+	unsigned long syscall_args[6] = {};
 	unsigned long val;
 	u32 j;
 	int64_t retval;
@@ -1386,11 +1411,8 @@ int f_sys_autofill(struct event_filler_arguments *args)
 				/*
 				 * Regular argument
 				 */
-				syscall_get_arguments(current,
-						args->regs,
-						evinfo->autofill_args[j].id,
-						1,
-						&val);
+				ppm_syscall_get_arguments(current, args->regs, syscall_args);
+				val = syscall_args[evinfo->autofill_args[j].id];
 			}
 
 			res = val_to_ring(args, val, 0, true, 0);

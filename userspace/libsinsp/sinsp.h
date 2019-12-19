@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2013-2018 Draios Inc dba Sysdig.
+Copyright (C) 2013-2019 Sysdig Inc.
 
 This file is part of sysdig.
 
@@ -44,6 +44,7 @@ limitations under the License.
 #pragma once
 
 #include "capture_stats_source.h"
+#include "container_engine/wmi_handle_source.h"
 
 #ifdef _WIN32
 #pragma warning(disable: 4251 4200 4221 4190)
@@ -53,6 +54,7 @@ limitations under the License.
 
 #include "sinsp_inet.h"
 #include "sinsp_public.h"
+#include "sinsp_exception.h"
 
 #define __STDC_FORMAT_MACROS
 
@@ -154,51 +156,6 @@ public:
 };
 
 /*!
-  \brief sinsp library exception.
-*/
-struct sinsp_exception : std::exception
-{
-	sinsp_exception()
-	{
-	}
-
-	~sinsp_exception() throw()
-	{
-	}
-
-	sinsp_exception(string error_str)
-	{
-		m_error_str = error_str;
-	}
-
-	sinsp_exception(string error_str, int32_t scap_rc)
-	{
-		m_error_str = error_str;
-		m_scap_rc = scap_rc;
-	}
-
-	char const* what() const throw()
-	{
-		return m_error_str.c_str();
-	}
-
-	int32_t scap_rc()
-	{
-		return m_scap_rc;
-	}
-
-	string m_error_str;
-	int32_t m_scap_rc;
-};
-
-/*!
-  \brief sinsp library exception.
-*/
-struct sinsp_capture_interrupt_exception : sinsp_exception
-{
-};
-
-/*!
   \brief The default way an event is converted to string by the library
 */
 #define DEFAULT_OUTPUT_STR "*%evt.num %evt.time %evt.cpu %proc.name (%thread.tid) %evt.dir %evt.type %evt.args"
@@ -216,7 +173,6 @@ public:
 	uint64_t m_n_procinfo_evts;
 	int64_t m_cur_procinfo_evt;
 	ppm_proclist_info* m_pli;
-	sinsp_evt* m_next_evt;
 };
 
 /** @defgroup inspector Main library
@@ -231,7 +187,7 @@ public:
   - event retrieval
   - setting capture filters
 */
-class SINSP_PUBLIC sinsp : public capture_stats_source
+class SINSP_PUBLIC sinsp : public capture_stats_source, public wmi_handle_source
 {
 public:
 	typedef std::shared_ptr<sinsp> ptr;
@@ -503,7 +459,7 @@ public:
 	   of failure.
 	*/
 	sinsp_threadinfo* get_thread(int64_t tid, bool query_os_if_not_found, bool lookup_only);
-	threadinfo_map_t::ptr_t get_thread_ref(int64_t tid, bool query_os_if_not_found, bool lookup_only);
+	threadinfo_map_t::ptr_t get_thread_ref(int64_t tid, bool query_os_if_not_found, bool lookup_only, bool main_thread=false);
 
 	/*!
 	  \brief Return the table with all the machine users.
@@ -547,7 +503,7 @@ public:
 
 	  \note this call won't work on file captures.
 	*/
-	void get_capture_stats(scap_stats* stats) override;
+	void get_capture_stats(scap_stats* stats) const override;
 
 	void set_max_thread_table_size(uint32_t value);
 
@@ -788,6 +744,22 @@ public:
 	*/
 	double get_read_progress();
 
+	/*!
+	  \brief Make the amount of data gathered for a syscall to be
+	  determined by the number of parameters.
+	*/
+	virtual int /*SCAP_X*/ dynamic_snaplen(bool enable)
+	{
+		if(enable)
+		{
+			return scap_enable_dynamic_snaplen(m_h);
+		}
+		else
+		{
+			return scap_disable_dynamic_snaplen(m_h);
+		}
+	}
+
 #ifndef CYGWING_AGENT
 	void init_k8s_ssl(const std::string *ssl_cert);
 	void init_k8s_client(std::string* api_server, std::string* ssl_cert, bool verbose = false);
@@ -851,25 +823,29 @@ public:
 	bool is_bpf_enabled();
 
 	static unsigned num_possible_cpus();
+
+#ifdef HAS_CAPTURE
+	static std::shared_ptr<std::string> lookup_cgroup_dir(const std::string& subsys);
+#endif
 #ifdef CYGWING_AGENT
-	wh_t* get_wmi_handle()
+	wh_t* get_wmi_handle() override
 	{
 		return scap_get_wmi_handle(m_h);
 	}
 #endif
 
-	static inline bool falco_consider_evtnum(uint16_t etype)
+	static inline bool simple_consumer_consider_evtnum(uint16_t etype)
 	{
 		enum ppm_event_flags flags = g_infotables.m_event_info[etype].flags;
 
-		return ! (flags & sinsp::falco_skip_flags());
+		return ! (flags & sinsp::simple_consumer_skip_flags());
 	}
 
-	static inline bool falco_consider_syscallid(uint16_t scid)
+	static inline bool simple_consumer_consider_syscallid(uint16_t scid)
 	{
 		enum ppm_event_flags flags = g_infotables.m_syscall_info_table[scid].flags;
 
-		return ! (flags & sinsp::falco_skip_flags());
+		return ! (flags & sinsp::simple_consumer_skip_flags());
 	}
 
 	// Add comm to the list of comms for which the inspector
@@ -878,23 +854,32 @@ public:
 
 	bool check_suppressed(int64_t tid);
 
+	void set_docker_socket_path(std::string socket_path);
 	void set_query_docker_image_info(bool query_image_info);
 
 	void set_cri_extra_queries(bool extra_queries);
 
 	void set_fullcapture_port_range(uint16_t range_start, uint16_t range_end);
 
+	void set_statsd_port(uint16_t port);
+
 	void set_cri_socket_path(const std::string& path);
 	void set_cri_timeout(int64_t timeout_ms);
+	void set_cri_async(bool async);
+	void set_cri_delay(uint64_t delay_ms);
 
 VISIBILITY_PROTECTED
 	bool add_thread(const sinsp_threadinfo *ptinfo);
+	void set_mode(scap_mode_t value)
+	{
+		m_mode = value;
+	}
 
 VISIBILITY_PRIVATE
 
-        static inline ppm_event_flags falco_skip_flags()
+        static inline ppm_event_flags simple_consumer_skip_flags()
         {
-		return (ppm_event_flags) (EF_SKIPPARSERESET | EF_UNUSED | EF_DROP_FALCO);
+		return (ppm_event_flags) (EF_SKIPPARSERESET | EF_UNUSED | EF_DROP_SIMPLE_CONS);
         }
 // Doxygen doesn't understand VISIBILITY_PRIVATE
 #ifdef _DOXYGEN
@@ -985,11 +970,17 @@ private:
 
 	void add_suppressed_comms(scap_open_args &oargs);
 
+	bool increased_snaplen_port_range_set() const
+	{
+		return m_increased_snaplen_port_range.range_start > 0 &&
+		       m_increased_snaplen_port_range.range_end > 0;
+	}
+
 	scap_t* m_h;
 	uint32_t m_nevts;
 	int64_t m_filesize;
 
-	scap_mode_t m_mode;
+	scap_mode_t m_mode = SCAP_MODE_NONE;
 
 	// If non-zero, reading from this fd and m_input_filename contains "fd
 	// <m_input_fd>". Otherwise, reading from m_input_filename.
@@ -1088,6 +1079,7 @@ public:
 #endif
 	int32_t m_n_proc_lookups;
 	uint64_t m_n_proc_lookups_duration_ns;
+	int32_t m_n_main_thread_lookups;
 	int32_t m_max_n_proc_lookups = -1;
 	int32_t m_max_n_proc_socket_lookups = -1;
 #ifdef HAS_ANALYZER
@@ -1098,6 +1090,17 @@ public:
 	// Saved snaplen
 	//
 	uint32_t m_snaplen;
+
+	//
+	// Saved increased capture range
+	//
+	struct
+	{
+		uint16_t range_start;
+		uint16_t range_end;
+	} m_increased_snaplen_port_range;
+
+	int32_t m_statsd_port;
 
 	//
 	// Some thread table limits
@@ -1148,16 +1151,6 @@ public:
 	// Protocol decoding state
 	//
 	std::vector<sinsp_protodecoder*> m_decoders_reset_list;
-
-	//
-	// Containers meta event management
-	//
-	sinsp_evt m_meta_evt; // XXX this should go away
-	char* m_meta_evt_buf; // XXX this should go away
-	bool m_meta_evt_pending; // XXX this should go away
-
-	int32_t m_meta_skipped_evt_res;
-	sinsp_evt* m_meta_skipped_evt;
 
 	//
 	// meta event management for other sources like k8s, mesos.
@@ -1218,6 +1211,7 @@ public:
 	friend class sinsp_baseliner;
 	friend class sinsp_memory_dumper;
 	friend class sinsp_network_interfaces;
+	friend class test_helper;
 
 	template<class TKey,class THash,class TCompare> friend class sinsp_connection_manager;
 

@@ -123,9 +123,9 @@ limitations under the License.
 #define CLONE_STALE_TIME_NS 2000000000
 
 //
-// For internal use
+// Port range to enable larger snaplen on
 //
-#define FALCOBL_FULL_PROCESSING
+#define DEFAULT_INCREASE_SNAPLEN_PORT_RANGE {0, 0}
 
 //
 // FD class customized with the storage we need

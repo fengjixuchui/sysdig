@@ -86,11 +86,11 @@ void sinsp_threadinfo::init()
 #endif
 	m_ainfo = NULL;
 	m_program_hash = 0;
-	m_program_hash_falco = 0;
+	m_program_hash_scripts = 0;
 	m_lastevent_data = NULL;
 	m_parent_loop_detected = false;
 	m_tty = 0;
-	m_is_container_healthcheck = false;
+	m_category = CAT_NONE;
 	m_blprogram = NULL;
 	m_loginuid = 0;
 }
@@ -171,9 +171,9 @@ void sinsp_threadinfo::compute_program_hash()
 	auto rem_len = MAX_PROG_HASH_LEN - (m_exe.size() + m_container_id.size());
 
 	//
-	// By default, the falco hash is just exe+container
+	// By default, the scripts hash is just exe+container
 	//
-	m_program_hash_falco = curr_hash;
+	m_program_hash_scripts = curr_hash;
 
 	//
 	// The program hash includes the arguments as well
@@ -194,7 +194,7 @@ void sinsp_threadinfo::compute_program_hash()
 
 	//
 	// For some specific processes (essentially the scripting languages)
-	// we include the arguments in the falco hash as well
+	// we include the arguments in the scripts hash as well
 	//
 	if(m_comm.size() == 4)
 	{
@@ -203,14 +203,14 @@ void sinsp_threadinfo::compute_program_hash()
 		if(ncomm == STR_AS_NUM_JAVA || ncomm == STR_AS_NUM_RUBY ||
 			ncomm == STR_AS_NUM_PERL || ncomm == STR_AS_NUM_NODE)
 		{
-			m_program_hash_falco = m_program_hash;
+			m_program_hash_scripts = m_program_hash;
 		}
 	}
 	else if(m_comm.size() >= 6)
 	{
 		if(m_comm.substr(0, 6) == "python")
 		{
-			m_program_hash_falco = m_program_hash;
+			m_program_hash_scripts = m_program_hash;
 		}
 	}
 }
@@ -325,6 +325,7 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 	case SCAP_FD_FILE_V2:
 		newfdi->m_openflags = fdi->info.regularinfo.open_flags;
 		newfdi->m_name = fdi->info.regularinfo.fname;
+		newfdi->m_dev = fdi->info.regularinfo.dev;
 
 		if(newfdi->m_name == USER_EVT_DEVICE_NAME)
 		{
@@ -424,7 +425,7 @@ void sinsp_threadinfo::init(scap_threadinfo* pi)
 	m_clone_ts = pi->clone_ts;
 	m_tty = pi->tty;
 	m_loginuid = pi->loginuid;
-	m_is_container_healthcheck = false;
+	m_category = CAT_NONE;
 
 	set_cgroups(pi->cgroups, pi->cgroups_len);
 	m_root = pi->root;
@@ -892,6 +893,21 @@ uint64_t sinsp_threadinfo::get_fd_limit()
 	return get_main_thread()->m_fdlimit;
 }
 
+const std::string& sinsp_threadinfo::get_cgroup(const std::string& subsys) const
+{
+	static const std::string notfound = "/";
+
+	for(const auto& it : m_cgroups)
+	{
+		if(it.first == subsys)
+		{
+			return it.second;
+		}
+	}
+
+	return notfound;
+}
+
 void sinsp_threadinfo::traverse_parent_state(visitor_func_t &visitor)
 {
 	// Use two pointers starting at this, traversing the parent
@@ -903,7 +919,8 @@ void sinsp_threadinfo::traverse_parent_state(visitor_func_t &visitor)
 	// Move fast to its parent
 	fast = (fast ? fast->get_parent_thread() : fast);
 
-	while(slow)
+	// The slow pointer must be valid and not have a tid of -1.
+	while(slow && slow->m_tid != -1)
 	{
 		if(!visitor(slow))
 		{
@@ -918,15 +935,20 @@ void sinsp_threadinfo::traverse_parent_state(visitor_func_t &visitor)
 		for (uint32_t i = 0; i < 2; i++) {
 			fast = (fast ? fast->get_parent_thread() : fast);
 
-			// If not at the end but fast == slow, there's a loop
-			// in the thread state.
-			if(slow && (slow == fast))
+			// If not at the end but fast == slow or if
+			// slow points to itself, there's a loop in
+			// the thread state.
+			if(slow && (slow == fast ||
+				    slow->m_tid == slow->m_ptid))
 			{
 				// Note we only log a loop once for a given main thread, to avoid flooding logs.
 				if(!m_parent_loop_detected)
 				{
 					g_logger.log(string("Loop in parent thread state detected for pid ") +
-						     std::to_string(m_pid), sinsp_logger::SEV_WARNING);
+						     std::to_string(m_pid) +
+						     ". stopped at tid= " + std::to_string(slow->m_tid) +
+						     " ptid=" + std::to_string(slow->m_ptid),
+						     sinsp_logger::SEV_WARNING);
 					m_parent_loop_detected = true;
 				}
 				return;
@@ -948,9 +970,16 @@ void sinsp_threadinfo::populate_cmdline(string &cmdline, sinsp_threadinfo *tinfo
 	}
 }
 
+bool sinsp_threadinfo::is_health_probe()
+{
+	return (m_category == sinsp_threadinfo::CAT_HEALTHCHECK ||
+		m_category == sinsp_threadinfo::CAT_LIVENESS_PROBE ||
+		m_category == sinsp_threadinfo::CAT_READINESS_PROBE);
+}
+
 shared_ptr<sinsp_threadinfo> sinsp_threadinfo::lookup_thread()
 {
-	return m_inspector->get_thread_ref(m_pid, true, true);
+	return m_inspector->get_thread_ref(m_pid, true, true, true);
 }
 
 //
@@ -1166,6 +1195,7 @@ void sinsp_threadinfo::fd_to_scap(scap_fdinfo *dst, sinsp_fdinfo_t* src)
 	case SCAP_FD_FILE_V2:
 		dst->info.regularinfo.open_flags = src->m_openflags;
 		strncpy(dst->info.regularinfo.fname, src->m_name.c_str(), SCAP_MAX_PATH_SIZE);
+		dst->info.regularinfo.dev = src->m_dev;
 		break;
 	case SCAP_FD_FIFO:
 	case SCAP_FD_FILE:

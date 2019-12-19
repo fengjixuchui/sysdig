@@ -163,6 +163,8 @@ or GPL2.txt for full copies of the license.
 #define PPM_CL_CLONE_STOPPED (1 << 26)
 #define PPM_CL_CLONE_VFORK (1 << 27)
 #define PPM_CL_CLONE_NEWCGROUP (1 << 28)
+#define PPM_CL_CHILD_IN_PIDNS (1<<29)			/* true if the thread created by clone() is *not*
+									in the init pid namespace */
 
 /*
  * Futex Operations
@@ -938,7 +940,13 @@ enum ppm_event_type {
 	PPME_SYSCALL_LINK_2_X = 309,
 	PPME_SYSCALL_LINKAT_2_E = 310,
 	PPME_SYSCALL_LINKAT_2_X = 311,
-	PPM_EVENT_MAX = 312
+	PPME_SYSCALL_FCHMODAT_E = 312,
+	PPME_SYSCALL_FCHMODAT_X = 313,
+	PPME_SYSCALL_CHMOD_E = 314,
+	PPME_SYSCALL_CHMOD_X = 315,
+	PPME_SYSCALL_FCHMOD_E = 316,
+	PPME_SYSCALL_FCHMOD_X = 317,
+	PPM_EVENT_MAX = 318
 };
 /*@}*/
 
@@ -1307,7 +1315,7 @@ enum ppm_event_flags {
 	EF_WAITS = (1 << 7), /* This event reads data from an FD. */
 	EF_SKIPPARSERESET = (1 << 8), /* This event shouldn't pollute the parser lastevent state tracker. */
 	EF_OLD_VERSION = (1 << 9), /* This event is kept for backward compatibility */
-	EF_DROP_FALCO = (1 << 10) /* This event should not be passed up to Falco */
+	EF_DROP_SIMPLE_CONS = (1 << 10) /* This event can be skipped by consumers that privilege low overhead to full event capture */
 };
 
 /*
@@ -1356,7 +1364,8 @@ enum ppm_param_type {
 	PT_IPV6NET = 39, /* An IPv6 network. */
 	PT_IPADDR = 40,  /* Either an IPv4 or IPv6 address. The length indicates which one it is. */
 	PT_IPNET = 41,  /* Either an IPv4 or IPv6 network. The length indicates which one it is. */
-	PT_MAX = 42 /* array size */
+	PT_MODE = 42, /* a 32 bit bitmask to represent file modes. */
+	PT_MAX = 43 /* array size */
 };
 
 enum ppm_print_format {
@@ -1454,6 +1463,7 @@ struct ppm_evt_hdr {
 #define PPM_IOCTL_GET_N_TRACEPOINT_HIT _IO(PPM_IOCTL_MAGIC, 20)
 #define PPM_IOCTL_GET_PROBE_VERSION _IO(PPM_IOCTL_MAGIC, 21)
 #define PPM_IOCTL_SET_FULLCAPTURE_PORT_RANGE _IO(PPM_IOCTL_MAGIC, 22)
+#define PPM_IOCTL_SET_STATSD_PORT _IO(PPM_IOCTL_MAGIC, 23)
 #endif // CYGWING_AGENT
 
 extern const struct ppm_name_value socket_families[];
@@ -1485,6 +1495,7 @@ extern const struct ppm_name_value access_flags[];
 extern const struct ppm_name_value pf_flags[];
 extern const struct ppm_name_value unlinkat_flags[];
 extern const struct ppm_name_value linkat_flags[];
+extern const struct ppm_name_value chmod_mode[];
 
 extern const struct ppm_param_info sockopt_dynamic_param[];
 extern const struct ppm_param_info ptrace_dynamic_param[];
@@ -1520,6 +1531,7 @@ enum syscall_flags {
 	UF_NEVER_DROP = (1 << 1),
 	UF_ALWAYS_DROP = (1 << 2),
 	UF_SIMPLEDRIVER_KEEP = (1 << 3),
+	UF_ATOMIC = (1 << 4), ///< The handler should not block (interrupt context)
 };
 
 struct syscall_evt_pair {

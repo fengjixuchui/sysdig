@@ -41,6 +41,7 @@ set(SINSP_SOURCES
 	chisel.cpp
 	chisel_api.cpp
 	container.cpp
+	container_engine/container_engine_base.cpp
 	container_engine/docker_common.cpp
 	container_info.cpp
 	ctext.cpp
@@ -110,6 +111,7 @@ set(SINSP_SOURCES
 	stopwatch.cpp
 	uri_parser.c
 	uri.cpp
+	user_event_logger.cpp
 	utils.cpp
 	user_event.cpp
 	value_parser.cpp
@@ -126,22 +128,28 @@ list(APPEND SINSP_SOURCES
 	container_engine/lxc.cpp
 	container_engine/mesos.cpp
 	container_engine/rkt.cpp
+	container_engine/bpm.cpp
 	runc.cpp)
 endif()
 
 if(NOT WIN32 AND NOT APPLE)
 list(APPEND SINSP_SOURCES
-    cri.cpp
+	cgroup_limits.cpp
+	cri.cpp
 	container_engine/cri.cpp
 	${CMAKE_CURRENT_BINARY_DIR}/cri.grpc.pb.cc
-	${CMAKE_CURRENT_BINARY_DIR}/cri.pb.cc)
+	${CMAKE_CURRENT_BINARY_DIR}/cri.pb.cc
+	grpc_channel_registry.cpp
+)
 endif()
 
 add_library(sinsp STATIC ${SINSP_SOURCES})
 
 target_link_libraries(sinsp 
 	scap
-	"${JSONCPP_LIB}")
+	"${CURL_LIBRARIES}"
+	"${JSONCPP_LIB}"
+	"${TBB_LIB}")
 
 if(USE_BUNDLED_LUAJIT)
 	add_dependencies(sinsp luajit)
@@ -153,13 +161,12 @@ if(NOT WIN32)
 	endif()
 	if(USE_BUNDLED_CURL)
 		add_dependencies(sinsp curl)
-		target_link_libraries(sinsp
-			"${CURL_LIBRARIES}")
 	endif()
 	if(USE_BUNDLED_TBB)
 		add_dependencies(sinsp tbb)
-		target_link_libraries(sinsp
-			"${TBB_LIB}")
+	endif()
+	if(USE_BUNDLED_GRPC)
+		add_dependencies(sinsp grpc)
 	endif()
 
 	if(NOT APPLE)
@@ -173,7 +180,6 @@ if(NOT WIN32)
 				COMMAND ${PROTOC} -I ${CMAKE_CURRENT_SOURCE_DIR} --grpc_out=. --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN} ${CMAKE_CURRENT_SOURCE_DIR}/cri.proto
 				WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-		add_dependencies(sinsp grpc)
 		target_link_libraries(sinsp
 			"${GRPCPP_LIB}"
 			"${GRPC_LIB}"

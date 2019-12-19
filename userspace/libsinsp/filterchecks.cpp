@@ -134,6 +134,9 @@ const filtercheck_field_info sinsp_filter_check_fd_fields[] =
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.sip.name", "Domain name associated with the server IP address."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.lip.name", "Domain name associated with the local IP address."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.rip.name", "Domain name associated with the remote IP address."},
+	{PT_INT32, EPF_NONE, PF_HEX, "fd.dev", "device number (major/minor) containing the referenced file"},
+	{PT_INT32, EPF_NONE, PF_DEC, "fd.dev.major", "major device number containing the referenced file"},
+	{PT_INT32, EPF_NONE, PF_DEC, "fd.dev.minor", "minor device number containing the referenced file"},
 };
 
 sinsp_filter_check_fd::sinsp_filter_check_fd()
@@ -1236,6 +1239,10 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len, bool 
 		break;
 	case TYPE_UID:
 		{
+			if(evt->get_type() == PPME_CONTAINER_JSON_E)
+			{
+				return NULL;
+			}
 			ASSERT(m_tinfo != NULL);
 
 			m_tstr = to_string(m_tinfo->m_tid) + to_string(m_tinfo->m_lastevent_fd);
@@ -1262,6 +1269,42 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len, bool 
 			}
 
 			m_tbool = evt->fdinfo_name_changed();
+
+			RETURN_EXTRACT_VAR(m_tbool);
+		}
+		break;
+	case TYPE_DEV:
+		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
+			m_tbool = m_fdinfo->get_device();
+
+			RETURN_EXTRACT_VAR(m_tbool);
+		}
+		break;
+	case TYPE_DEV_MAJOR:
+		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
+			m_tbool = m_fdinfo->get_device_major();
+
+			RETURN_EXTRACT_VAR(m_tbool);
+		}
+		break;
+	case TYPE_DEV_MINOR:
+		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
+			m_tbool = m_fdinfo->get_device_minor();
 
 			RETURN_EXTRACT_VAR(m_tbool);
 		}
@@ -1810,6 +1853,8 @@ const filtercheck_field_info sinsp_filter_check_thread_fields[] =
 	{PT_CHARBUF, EPF_TABLE_ONLY, PF_NA, "thread.nametid", "this field chains the process name and tid of a thread and can be used as a specific identifier of a thread for a specific execve."},
 	{PT_INT64, EPF_NONE, PF_ID, "proc.vpgid", "the process group id of the process generating the event, as seen from its current PID namespace."},
 	{PT_BOOL, EPF_NONE, PF_NA, "proc.is_container_healthcheck", "true if this process is running as a part of the container's health check."},
+	{PT_BOOL, EPF_NONE, PF_NA, "proc.is_container_liveness_probe", "true if this process is running as a part of the container's liveness probe."},
+	{PT_BOOL, EPF_NONE, PF_NA, "proc.is_container_readiness_probe", "true if this process is running as a part of the container's readiness probe."},
 };
 
 sinsp_filter_check_thread::sinsp_filter_check_thread()
@@ -2599,7 +2644,13 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 		m_tstr = tinfo->get_comm() + to_string(evt->get_tid());
 		RETURN_EXTRACT_STRING(m_tstr);
 	case TYPE_IS_CONTAINER_HEALTHCHECK:
-		m_tbool = tinfo->m_is_container_healthcheck;
+		m_tbool = (tinfo->m_category == sinsp_threadinfo::CAT_HEALTHCHECK);
+		RETURN_EXTRACT_VAR(m_tbool);
+	case TYPE_IS_CONTAINER_LIVENESS_PROBE:
+		m_tbool = (tinfo->m_category == sinsp_threadinfo::CAT_LIVENESS_PROBE);
+		RETURN_EXTRACT_VAR(m_tbool);
+	case TYPE_IS_CONTAINER_READINESS_PROBE:
+		m_tbool = (tinfo->m_category == sinsp_threadinfo::CAT_READINESS_PROBE);
 		RETURN_EXTRACT_VAR(m_tbool);
 	default:
 		ASSERT(false);
@@ -3172,6 +3223,11 @@ uint8_t *sinsp_filter_check_event::extract_abspath(sinsp_evt *evt, OUT uint32_t 
 	{
 		dirfdarg = "dirfd";
 		patharg = "path";
+	}
+	else if(etype == PPME_SYSCALL_FCHMODAT_X)
+	{
+		dirfdarg = "dirfd";
+		patharg = "filename";
 	}
 
 	if(!dirfdarg || !patharg)
@@ -4399,12 +4455,16 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len, bo
 							vector<string> subelements = sinsp_split(e, ':');
 							ASSERT(subelements.size() == 2);
 							m_strstorage = trim(subelements[1]);
+							if(m_strstorage.length() > 12)
+							{
+								m_strstorage = m_strstorage.substr(0, 12);
+							}
 							RETURN_EXTRACT_STRING(m_strstorage);
 						}
 					}
 					else if(m_field_id == TYPE_INFRA_DOCKER_CONTAINER_NAME)
 					{
-						if(e.substr(0, sizeof("Name") - 1) == "Name")
+						if(e.substr(0, sizeof("name") - 1) == "name")
 						{
 							vector<string> subelements = sinsp_split(e, ':');
 							ASSERT(subelements.size() == 2);
@@ -4418,7 +4478,17 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len, bo
 						{
 							vector<string> subelements = sinsp_split(e, ':');
 							ASSERT(subelements.size() == 2);
-							m_strstorage = trim(subelements[1]);
+							m_strstorage = subelements[1];
+
+							if(m_strstorage.find("@") != string::npos)
+							{
+								m_strstorage = m_strstorage.substr(0, m_strstorage.find("@"));
+							}
+							else if(m_strstorage.find("sha256") != string::npos)
+							{
+								m_strstorage = e.substr(e.find(":") + 1);
+							}
+							m_strstorage = trim(m_strstorage);
 							RETURN_EXTRACT_STRING(m_strstorage);
 						}
 					}
@@ -5905,7 +5975,9 @@ const filtercheck_field_info sinsp_filter_check_container_fields[] =
 	{PT_CHARBUF, EPF_NONE, PF_NA, "container.image.repository", "the container image repository (e.g. sysdig/sysdig)."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "container.image.tag", "the container image tag (e.g. stable, latest)."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "container.image.digest", "the container image registry digest (e.g. sha256:d977378f890d445c15e51795296e4e5062f109ce6da83e0a355fc4ad8699d27)."},
-	{PT_CHARBUF, EPF_NONE, PF_NA, "container.healthcheck", "The container's health check. Will be the null value (\"N/A\") if no healthcheck configured, \"NONE\" if configured but explicitly not created, and the healthcheck command line otherwise"}
+	{PT_CHARBUF, EPF_NONE, PF_NA, "container.healthcheck", "The container's health check. Will be the null value (\"N/A\") if no healthcheck configured, \"NONE\" if configured but explicitly not created, and the healthcheck command line otherwise"},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "container.liveness_probe", "The container's liveness probe. Will be the null value (\"N/A\") if no liveness probe configured, the liveness probe command line otherwise"},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "container.readiness_probe", "The container's readiness probe. Will be the null value (\"N/A\") if no readiness probe configured, the readiness probe command line otherwise"}
 };
 
 sinsp_filter_check_container::sinsp_filter_check_container()
@@ -5939,7 +6011,8 @@ int32_t sinsp_filter_check_container::extract_arg(const string &val, size_t base
 	try
 	{
 		m_argid = sinsp_numparser::parsed32(numstr);
-	} catch (sinsp_exception &e)
+	}
+	catch (const sinsp_exception& e)
 	{
 		if(strstr(e.what(), "is not a valid number") == NULL)
 		{
@@ -6039,7 +6112,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6062,7 +6135,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6088,7 +6161,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6130,7 +6203,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6162,6 +6235,9 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 			case sinsp_container_type::CT_RKT:
 				m_tstr = "rkt";
 				break;
+			case sinsp_container_type::CT_BPM:
+				m_tstr = "bpm";
+				break;
 			default:
 				ASSERT(false);
 				break;
@@ -6175,7 +6251,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6202,7 +6278,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6237,7 +6313,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		else
 		{
 
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6280,7 +6356,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		else
 		{
 
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
@@ -6333,39 +6409,46 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
 		}
 		break;
 	case TYPE_CONTAINER_HEALTHCHECK:
+	case TYPE_CONTAINER_LIVENESS_PROBE:
+	case TYPE_CONTAINER_READINESS_PROBE:
 		if(tinfo->m_container_id.empty())
 		{
 			return NULL;
 		}
 		else
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info)
 			{
 				return NULL;
 			}
 
-			if(container_info->m_healthcheck_obj.isNull())
+			for(auto &probe : container_info->m_health_probes)
 			{
-				return NULL;
+				if((m_field_id == TYPE_CONTAINER_HEALTHCHECK &&
+				    probe.m_probe_type == sinsp_container_info::container_health_probe::PT_HEALTHCHECK) ||
+				   (m_field_id == TYPE_CONTAINER_LIVENESS_PROBE &&
+				    probe.m_probe_type == sinsp_container_info::container_health_probe::PT_LIVENESS_PROBE) ||
+				   (m_field_id == TYPE_CONTAINER_READINESS_PROBE &&
+				    probe.m_probe_type == sinsp_container_info::container_health_probe::PT_READINESS_PROBE))
+				{
+					m_tstr = probe.m_health_probe_exe;
+
+					for(auto &arg : probe.m_health_probe_args)
+					{
+						m_tstr += " ";
+						m_tstr += arg;
+					}
+
+					RETURN_EXTRACT_STRING(m_tstr);
+				}
 			}
 
-			if(!container_info->m_has_healthcheck)
-			{
-				m_tstr = "NONE";
-
-				RETURN_EXTRACT_STRING(m_tstr);
-			}
-
-			m_tstr = container_info->m_healthcheck_exe;
-
-			for(auto &arg : container_info->m_healthcheck_args)
-			{
-				m_tstr += " ";
-				m_tstr += arg;
-			}
-
+			// If here, then the container didn't have any
+			// health probe matching the filtercheck
+			// field.
+			m_tstr = "NONE";
 			RETURN_EXTRACT_STRING(m_tstr);
 		}
 
@@ -7685,7 +7768,7 @@ mesos_task::ptr_t sinsp_filter_check_mesos::find_task_for_thread(const sinsp_thr
 
 		if(m_inspector && m_inspector->m_mesos_client)
 		{
-			const sinsp_container_info *container_info =
+			const sinsp_container_info::ptr_t container_info =
 				m_inspector->m_container_manager.get_container(tinfo->m_container_id);
 			if(!container_info || container_info->m_mesos_task_id.empty())
 			{

@@ -37,6 +37,7 @@ typedef class sinsp_threadinfo sinsp_threadinfo;
 
 namespace test_helpers {
 	class event_builder;
+	class sinsp_mock;
 }
 
 
@@ -169,7 +170,7 @@ public:
 	/*!
 	  \brief Get the incremental number of this event.
 	*/
-	inline uint64_t get_num()
+	inline uint64_t get_num() const
 	{
 		return m_evtnum;
 	}
@@ -338,17 +339,48 @@ public:
 #endif
 
 	/*!
-	  \brief Return whether or not falco should consider this
-	  event. (Generally, these events are automatically filtered
-	  out, but some events related to internal tracking are returned by next() anyway).
+	  \brief Return whether or not a simple consumer that privileges low overhead to
+	  full event capture should consider this event. (Generally, these events are
+	  automatically filtered out, but some events related to internal tracking are
+	  returned by next() anyway).
 	*/
 
-	bool falco_consider();
+	bool simple_consumer_consider();
 
 	inline uint16_t get_source()
 	{
 		return ESRC_SINSP;
 	}
+
+	/*!
+	  \brief Returns true if this event represents a system call error,
+	         false otherwise.
+	*/
+	bool is_syscall_error() const;
+
+	/*!
+	  \brief Returns true if this event represents a file open system
+	         call error, false otherwise.
+
+          Precondition: is_syscall_error() must return true.
+	*/
+	bool is_file_open_error() const;
+
+	/*!
+	  \brief Returns true if this event represents a file-related system
+	         call error (including open errors), false otherwise.
+
+	  Precondition: is_syscall_error() must return true.
+	*/
+	bool is_file_error() const;
+
+	/*!
+	  \brief Returns true if this event represents a network-related system
+	         call error, false otherwise.
+
+	  Precondition: is_syscall_error() must return true.
+	*/
+	bool is_network_error() const;
 
 // Doxygen doesn't understand VISIBILITY_PRIVATE
 #ifdef _DOXYGEN
@@ -362,21 +394,27 @@ private:
 
 	const char* get_param_value_str(const char* name, OUT const char** resolved_str, param_fmt fmt = PF_NORMAL);
 
-	inline void init()
+	inline void init_keep_threadinfo()
 	{
 		m_flags = EF_NONE;
 		m_info = &(m_event_info_table[m_pevt->type]);
-		m_tinfo = NULL;
 		m_fdinfo = NULL;
 		m_fdinfo_name_changed = false;
 		m_iosize = 0;
 		m_poriginal_evt = NULL;
+	}
+	inline void init()
+	{
+		init_keep_threadinfo();
+		m_tinfo_ref.reset();
+		m_tinfo = NULL;
 	}
 	inline void init(uint8_t* evdata, uint16_t cpuid)
 	{
 		m_flags = EF_NONE;
 		m_pevt = (scap_evt *)evdata;
 		m_info = &(m_event_info_table[m_pevt->type]);
+		m_tinfo_ref.reset();
 		m_tinfo = NULL;
 		m_fdinfo = NULL;
 		m_fdinfo_name_changed = false;
@@ -392,6 +430,7 @@ private:
 	{
 		m_pevt = scap_event;
 		m_info = ppm_event;
+		m_tinfo_ref.reset(); // we don't own the threadinfo so don't try to manage its lifetime
 		m_tinfo = threadinfo;
 		m_fdinfo = fdinfo;
 	}
@@ -446,6 +485,9 @@ VISIBILITY_PRIVATE
 	std::vector<char> m_paramstr_storage;
 	std::vector<char> m_resolved_paramstr_storage;
 
+	// reference to keep threadinfo alive. currently only used for synthetic container event thread info
+	// it should either be null, or point to the same place as m_tinfo
+	std::shared_ptr<sinsp_threadinfo> m_tinfo_ref;
 	sinsp_threadinfo* m_tinfo;
 	sinsp_fdinfo_t* m_fdinfo;
 
@@ -482,6 +524,7 @@ VISIBILITY_PRIVATE
 	friend class sinsp_memory_dumper;
 	friend class sinsp_memory_dumper_job;
 	friend class test_helpers::event_builder;
+	friend class test_helpers::sinsp_mock;
 };
 
 /*@}*/

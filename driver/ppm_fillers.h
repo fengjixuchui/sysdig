@@ -56,6 +56,7 @@ or GPL2.txt for full copies of the license.
 	FN(sys_recvmsg_x)			\
 	FN(sys_recvmsg_x_2)			\
 	FN(sys_shutdown_e)			\
+	FN(sys_creat_x)				\
 	FN(sys_pipe_x)				\
 	FN(sys_eventfd_e)			\
 	FN(sys_futex_e)				\
@@ -107,6 +108,9 @@ or GPL2.txt for full copies of the license.
 	FN(sys_socket_x)			\
 	FN(sys_bpf_x)				\
 	FN(sys_unlinkat_x)			\
+	FN(sys_fchmodat_x)			\
+	FN(sys_chmod_x)				\
+	FN(sys_fchmod_x)			\
 	FN(sys_mkdirat_x)			\
 	FN(sys_openat_x)			\
 	FN(sys_linkat_x)			\

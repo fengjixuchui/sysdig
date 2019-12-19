@@ -9,9 +9,20 @@ or GPL2.txt for full copies of the license.
 #ifndef __FILLERS_H
 #define __FILLERS_H
 
+/*
+ * https://chromium.googlesource.com/chromiumos/third_party/kernel/+/096925a44076ba5c52faa84d255a847130ff341e%5E%21/#F2
+ * This commit diverged the ChromiumOS kernel from stock in the area of audit
+ * information, which this probe accesses.
+ *
+ * If running on a patched version of COS, enable this #define to get the
+ * probe to build.
+ */
+//#define COS_73_WORKAROUND
+
 #include "../ppm_flag_helpers.h"
 
 #include <linux/tty.h>
+#include <linux/audit.h>
 
 #define FILLER_RAW(x)							\
 static __always_inline int __bpf_##x(struct filler_data *data);		\
@@ -123,6 +134,8 @@ FILLER(sys_open_x, true)
 	unsigned int flags;
 	unsigned int mode;
 	unsigned long val;
+	unsigned long dev;
+	unsigned long ino;
 	long retval;
 	int res;
 
@@ -157,7 +170,16 @@ FILLER(sys_open_x, true)
 	mode = bpf_syscall_get_argument(data, 2);
 	mode = open_modes_to_scap(val, mode);
 	res = bpf_val_to_ring(data, mode);
+	if (res != PPM_SUCCESS)
+		return res;
 
+	/*
+	 * Device
+	 */
+	if (retval < 0 || !bpf_get_fd_dev_ino(retval, &dev, &ino))
+		dev = 0;
+
+	res = bpf_val_to_ring(data, dev);
 	return res;
 }
 
@@ -332,7 +354,7 @@ FILLER(sys_poll_x, true)
 	return res;
 }
 
-#define MAX_IOVCNT 8
+#define MAX_IOVCNT 32
 
 static __always_inline int bpf_parse_readv_writev_bufs(struct filler_data *data,
 						       const struct iovec __user *iovsrc,
@@ -1874,6 +1896,8 @@ FILLER(proc_startupdate_3, true)
 		kgid_t egid;
 		pid_t vtid;
 		pid_t vpid;
+		struct pid_namespace *pidns = bpf_task_active_pid_ns(task);
+		int pidns_level = _READ(pidns->level);
 
 		/*
 		 * flags
@@ -1884,6 +1908,18 @@ FILLER(proc_startupdate_3, true)
 			flags = 0;
 
 		flags = clone_flags_to_scap(flags);
+
+		if(pidns_level != 0) {
+			flags |= PPM_CL_CHILD_IN_PIDNS;
+		} else {
+			struct nsproxy *nsproxy = _READ(task->nsproxy);
+			if(nsproxy) {
+				struct pid_namespace *pid_ns_for_children = _READ(nsproxy->pid_ns_for_children);
+				if(pid_ns_for_children != pidns) {
+					flags |= PPM_CL_CHILD_IN_PIDNS;
+				}
+			}
+		}
 
 		res = bpf_val_to_ring_type(data, flags, PT_FLAGS32);
 		if (res != PPM_SUCCESS)
@@ -2003,7 +2039,19 @@ FILLER(proc_startupdate_3, true)
 		 * loginuid
 		 */
 		/* TODO: implement user namespace support */
+#ifdef COS_73_WORKAROUND
+		{
+			struct audit_task_info* audit = _READ(task->audit);
+			if (audit) {
+				loginuid = _READ(audit->loginuid);
+			} else {
+				loginuid = INVALID_UID;
+			}
+		}
+#else
 		loginuid = _READ(task->loginuid);
+#endif
+
 		res = bpf_val_to_ring_type(data, loginuid.val, PT_INT32);
 		if (res != PPM_SUCCESS)
 			return res;
@@ -2154,6 +2202,8 @@ FILLER(sys_generic, true)
 
 FILLER(sys_openat_x, true)
 {
+	unsigned long dev;
+	unsigned long ino;
 	unsigned long flags;
 	unsigned long val;
 	unsigned long mode;
@@ -2200,7 +2250,16 @@ FILLER(sys_openat_x, true)
 	mode = bpf_syscall_get_argument(data, 3);
 	mode = open_modes_to_scap(val, mode);
 	res = bpf_val_to_ring(data, mode);
+	if (res != PPM_SUCCESS)
+		return res;
 
+	/*
+	 * Device
+	 */
+	if (retval < 0 || !bpf_get_fd_dev_ino(retval, &dev, &ino))
+		dev = 0;
+
+	res = bpf_val_to_ring(data, dev);
 	return res;
 }
 
@@ -2839,9 +2898,51 @@ FILLER(sys_sendmsg_x, true)
 	return res;
 }
 
+FILLER(sys_creat_x, true)
+{
+	unsigned long dev;
+	unsigned long ino;
+	unsigned long val;
+	unsigned long mode;
+	long retval;
+	int res;
+
+	retval = bpf_syscall_get_retval(data->ctx);
+	res = bpf_val_to_ring(data, retval);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * name
+	 */
+	val = bpf_syscall_get_argument(data, 0);
+	res = bpf_val_to_ring(data, val);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * mode
+	 */
+	mode = bpf_syscall_get_argument(data, 1);
+	mode = open_modes_to_scap(O_CREAT, mode);
+	res = bpf_val_to_ring(data, mode);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * Device
+	 */
+	if (retval < 0 || !bpf_get_fd_dev_ino(retval, &dev, &ino))
+		dev = 0;
+
+	res = bpf_val_to_ring(data, dev);
+	return res;
+}
+
 FILLER(sys_pipe_x, true)
 {
 	unsigned long ino;
+	unsigned long dev;
 	unsigned long val;
 	long retval;
 	int fds[2];
@@ -2870,7 +2971,7 @@ FILLER(sys_pipe_x, true)
 	if (res != PPM_SUCCESS)
 		return res;
 
-	if (!bpf_get_ino_fd(fds[0], &ino))
+	if (!bpf_get_fd_dev_ino(fds[0], &dev, &ino))
 		ino = 0;
 
 	res = bpf_val_to_ring(data, ino);
@@ -3417,6 +3518,15 @@ FILLER(sys_pagefault_e, false)
 	return res;
 }
 
+static __always_inline int siginfo_not_a_pointer(struct siginfo* info)
+{
+#ifdef SEND_SIG_FORCED
+	return info == SEND_SIG_NOINFO || info == SEND_SIG_PRIV || SEND_SIG_FORCED;
+#else
+	return info == (struct siginfo*)SEND_SIG_NOINFO || info == (struct siginfo*)SEND_SIG_PRIV;
+#endif
+}
+
 FILLER(sys_signaldeliver_e, false)
 {
 	struct signal_deliver_args *ctx;
@@ -3427,12 +3537,15 @@ FILLER(sys_signaldeliver_e, false)
 	ctx = (struct signal_deliver_args *)data->ctx;
 #ifdef BPF_SUPPORTS_RAW_TRACEPOINTS
 	struct siginfo *info = (struct siginfo *)ctx->info;
-
 	sig = ctx->sig;
-	if (sig == SIGKILL) {
+
+	if (siginfo_not_a_pointer(info)) {
+		info = NULL;
+		spid = 0;
+	} else if (sig == SIGKILL) {
 		spid = _READ(info->_sifields._kill._pid);
 	} else if (sig == SIGTERM || sig == SIGHUP || sig == SIGINT ||
-		   sig == SIGTSTP || sig == SIGQUIT) {
+	           sig == SIGTSTP || sig == SIGQUIT) {
 		int si_code = _READ(info->si_code);
 
 		if (si_code == SI_USER ||
@@ -4073,6 +4186,103 @@ FILLER(sys_autofill, true)
 		if (res != PPM_SUCCESS)
 			return res;
 	}
+
+	return res;
+}
+
+FILLER(sys_fchmodat_x, true)
+{
+	unsigned long val;
+	int res;
+	long retval;
+	unsigned int mode;
+
+	retval = bpf_syscall_get_retval(data->ctx);
+	res = bpf_val_to_ring(data, retval);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * dirfd
+	 */
+	val = bpf_syscall_get_argument(data, 0);
+	if ((int)val == AT_FDCWD)
+		val = PPM_AT_FDCWD;
+
+	res = bpf_val_to_ring(data, val);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * filename
+	 */
+	val = bpf_syscall_get_argument(data, 1);
+	res = bpf_val_to_ring(data, val);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * mode
+	 */
+	mode = bpf_syscall_get_argument(data, 2);
+	mode = chmod_mode_to_scap(mode);
+	res = bpf_val_to_ring(data, mode);
+
+	return res;
+}
+
+FILLER(sys_chmod_x, true)
+{
+	unsigned long val;
+	int res;
+	long retval;
+
+	retval = bpf_syscall_get_retval(data->ctx);
+	res = bpf_val_to_ring(data, retval);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * filename
+	 */
+	val = bpf_syscall_get_argument(data, 0);
+	res = bpf_val_to_ring(data, val);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * mode
+	 */
+	val = bpf_syscall_get_argument(data, 1);
+	res = bpf_val_to_ring(data, val);
+
+	return res;
+}
+
+FILLER(sys_fchmod_x, true)
+{
+	unsigned long val;
+	int res;
+	long retval;
+
+	retval = bpf_syscall_get_retval(data->ctx);
+	res = bpf_val_to_ring(data, retval);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * fd
+	 */
+	val = bpf_syscall_get_argument(data, 0);
+	res = bpf_val_to_ring(data, val);
+	if (res != PPM_SUCCESS)
+		return res;
+
+	/*
+	 * mode
+	 */
+	val = bpf_syscall_get_argument(data, 1);
+	res = bpf_val_to_ring(data, val);
 
 	return res;
 }
