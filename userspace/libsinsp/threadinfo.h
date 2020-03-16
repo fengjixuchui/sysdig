@@ -40,14 +40,12 @@ struct iovec {
 
 class sinsp_delays_info;
 class sinsp_threadtable_listener;
-class thread_analyzer_info;
 class sinsp_tracerparser;
 class blprogram;
 
 typedef struct erase_fd_params
 {
 	bool m_remove_from_table;
-	sinsp* m_inspector;
 	int64_t m_fd;
 	sinsp_threadinfo* m_tinfo;
 	sinsp_fdinfo_t* m_fdinfo;
@@ -72,9 +70,8 @@ typedef struct erase_fd_params
 class SINSP_PUBLIC sinsp_threadinfo
 {
 public:
-	sinsp_threadinfo();
-	sinsp_threadinfo(sinsp *inspector);
-	~sinsp_threadinfo();
+	sinsp_threadinfo(sinsp *inspector = nullptr);
+	virtual ~sinsp_threadinfo();
 
 	/*!
 	  \brief Return the name of the process containing this thread, e.g. "top".
@@ -120,7 +117,7 @@ public:
 	  \brief Get the main thread of the process containing this thread.
 	*/
 #ifndef _WIN32
-	inline sinsp_threadinfo* get_main_thread() 
+	inline sinsp_threadinfo* get_main_thread() const
 	{
 		auto main_thread = m_main_thread.lock();
 		if(!main_thread)
@@ -137,7 +134,7 @@ public:
 				//       invoked for a threadinfo that is in the stack. Caching the this pointer
 				//       would cause future mess.
 				//
-				return this;
+				return const_cast<sinsp_threadinfo*>(this);
 			}
 			else
 			{
@@ -219,7 +216,7 @@ public:
 	/*!
 	  \brief Return the number of open FDs for this thread.
 	*/
-	uint64_t get_fd_opencount();
+	uint64_t get_fd_opencount() const;
 
 	/*!
 	  \brief Return the maximum number of FDs this thread can open.
@@ -310,8 +307,6 @@ public:
 	//
 	sinsp_tracerparser* m_tracer_parser;
 
-	thread_analyzer_info* m_ainfo;
-
 	size_t args_len() const;
 	size_t env_len() const;
 	size_t cgroups_len() const;
@@ -353,6 +348,34 @@ public: // types required for use in sets
 		}
 	};
 
+protected:
+	inline sinsp_fdtable* get_fd_table()
+	{
+		if(!(m_flags & PPM_CL_CLONE_FILES))
+		{
+			return &m_fdtable;;
+		}
+		else
+		{
+			sinsp_threadinfo* root = get_main_thread();
+			return (root == nullptr) ? nullptr : &(root->m_fdtable);
+		}
+	}
+
+	inline const sinsp_fdtable* get_fd_table() const
+	{
+		if(!(m_flags & PPM_CL_CLONE_FILES))
+		{
+			return &m_fdtable;;
+		}
+		else
+		{
+			sinsp_threadinfo* root = get_main_thread();
+			return (root == nullptr) ? nullptr : &(root->m_fdtable);
+		}
+	}
+
+public:
 VISIBILITY_PRIVATE
 	void init();
 	// return true if, based on the current inspector filter, this thread should be kept
@@ -361,25 +384,6 @@ VISIBILITY_PRIVATE
 	sinsp_fdinfo_t* add_fd(int64_t fd, sinsp_fdinfo_t *fdinfo);
 	void add_fd_from_scap(scap_fdinfo *fdinfo, OUT sinsp_fdinfo_t *res);
 	void remove_fd(int64_t fd);
-	inline sinsp_fdtable* get_fd_table()
-	{
-		sinsp_threadinfo* root;
-
-		if(!(m_flags & PPM_CL_CLONE_FILES))
-		{
-			root = this;
-		}
-		else
-		{
-			root = get_main_thread();
-			if(NULL == root)
-			{
-				return NULL;
-			}
-		}
-
-		return &(root->m_fdtable);
-	}
 	void set_cwd(const char *cwd, uint32_t cwdlen);
 	sinsp_threadinfo* get_cwd_root();
 	void set_args(const char* args, size_t len);
@@ -400,7 +404,7 @@ VISIBILITY_PRIVATE
 	}
 	void allocate_private_state();
 	void compute_program_hash();
-	std::shared_ptr<sinsp_threadinfo> lookup_thread();
+	std::shared_ptr<sinsp_threadinfo> lookup_thread() const;
 
 	size_t strvec_len(const std::vector<std::string> &strs) const;
 	void strvec_to_iovec(const std::vector<std::string> &strs,
@@ -425,7 +429,7 @@ VISIBILITY_PRIVATE
 	//
 	sinsp_fdtable m_fdtable; // The fd table of this thread
 	std::string m_cwd; // current working directory
-	std::weak_ptr<sinsp_threadinfo> m_main_thread;
+	mutable std::weak_ptr<sinsp_threadinfo> m_main_thread;
 	uint8_t* m_lastevent_data; // Used by some event parsers to store the last enter event
 	std::vector<void*> m_private_state;
 
@@ -442,7 +446,6 @@ VISIBILITY_PRIVATE
 	friend class sinsp_evt;
 	friend class sinsp_thread_manager;
 	friend class sinsp_transaction_table;
-	friend class thread_analyzer_info;
 	friend class sinsp_tracerparser;
 	friend class lua_cbacks;
 	friend class sinsp_baseliner;

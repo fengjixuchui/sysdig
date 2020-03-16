@@ -40,19 +40,11 @@ static void copy_ipv6_address(uint32_t* dest, uint32_t* src)
 ///////////////////////////////////////////////////////////////////////////////
 // sinsp_threadinfo implementation
 ///////////////////////////////////////////////////////////////////////////////
-sinsp_threadinfo::sinsp_threadinfo() :
-	m_fdtable(NULL)
-{
-	m_inspector = NULL;
-	m_tracer_parser = NULL;
-	init();
-}
-
-sinsp_threadinfo::sinsp_threadinfo(sinsp *inspector) :
+sinsp_threadinfo::sinsp_threadinfo(sinsp* inspector) :
+	m_tracer_parser(NULL),
+	m_inspector(inspector),
 	m_fdtable(inspector)
 {
-	m_inspector = inspector;
-	m_tracer_parser = NULL;
 	init();
 }
 
@@ -84,7 +76,6 @@ void sinsp_threadinfo::init()
 	m_last_latency_entertime = 0;
 	m_latency = 0;
 #endif
-	m_ainfo = NULL;
 	m_program_hash = 0;
 	m_program_hash_scripts = 0;
 	m_lastevent_data = NULL;
@@ -883,7 +874,7 @@ double sinsp_threadinfo::get_fd_usage_pct_d()
 	}
 }
 
-uint64_t sinsp_threadinfo::get_fd_opencount()
+uint64_t sinsp_threadinfo::get_fd_opencount() const
 {
 	return get_main_thread()->m_fdtable.size();
 }
@@ -977,7 +968,7 @@ bool sinsp_threadinfo::is_health_probe()
 		m_category == sinsp_threadinfo::CAT_READINESS_PROBE);
 }
 
-shared_ptr<sinsp_threadinfo> sinsp_threadinfo::lookup_thread()
+shared_ptr<sinsp_threadinfo> sinsp_threadinfo::lookup_thread() const
 {
 	return m_inspector->get_thread_ref(m_pid, true, true, true);
 }
@@ -1364,7 +1355,6 @@ void sinsp_thread_manager::remove_thread(int64_t tid, bool force)
 
 			erase_fd_params eparams;
 			eparams.m_remove_from_table = false;
-			eparams.m_inspector = m_inspector;
 			eparams.m_tinfo = tinfo;
 			eparams.m_ts = m_inspector->m_lastevent_ts;
 

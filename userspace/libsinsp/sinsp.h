@@ -98,6 +98,7 @@ using namespace std;
 #include "eventformatter.h"
 #include "sinsp_pd_callback_type.h"
 
+#include "include/sinsp_external_processor.h"
 class sinsp_partial_transaction;
 class sinsp_parser;
 class sinsp_analyzer;
@@ -251,6 +252,11 @@ public:
 	   call to \ref)
 	*/
 	virtual int32_t next(OUT sinsp_evt **evt);
+
+	/*!
+	  \brief Get the maximum number of bytes currently in use by any CPU buffer
+     */
+	uint64_t max_buf_used();
 
 	/*!
 	  \brief Get the number of events that have been captured and processed
@@ -511,9 +517,28 @@ public:
 	sinsp_stats get_stats();
 #endif
 
-#ifdef HAS_ANALYZER
-	sinsp_analyzer* m_analyzer;
-#endif
+	libsinsp::event_processor* m_external_event_processor;
+
+	sinsp_threadinfo* build_threadinfo()
+    {
+        return m_external_event_processor ? m_external_event_processor->build_threadinfo(this)
+                                          : new sinsp_threadinfo(this);
+    } 
+
+	/*!
+	  \brief registers external event processor.
+	  After this, callbacks on libsinsp::event_processor will happen at
+	  the appropriate times. This registration must happen before calling open.
+	*/
+	void register_external_event_processor(libsinsp::event_processor& processor)
+	{
+		m_external_event_processor = &processor;
+	}
+
+	libsinsp::event_processor* get_external_event_processor() const
+	{
+		return m_external_event_processor;
+	}
 
 	/*!
 	  \brief Return the event and system call information tables.

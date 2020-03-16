@@ -41,10 +41,6 @@ limitations under the License.
 #include "filter.h"
 #include "filterchecks.h"
 #include "protodecoder.h"
-#ifdef HAS_ANALYZER
-#include "analyzer_int.h"
-#include "analyzer_thread.h"
-#endif
 #ifdef SIMULATE_DROP_MODE
 bool should_drop(sinsp_evt *evt);
 #endif
@@ -54,20 +50,6 @@ bool should_drop(sinsp_evt *evt);
 extern sinsp_protodecoder_list g_decoderlist;
 extern sinsp_evttables g_infotables;
 
-#if 0
-sinsp_parser::sinsp_parser(sinsp *inspector) :
-	m_inspector(inspector),
-	m_tmp_evt(m_inspector),
-	m_fd_listener(NULL)
-{
-	m_fake_userevt = (scap_evt*)m_fake_userevt_storage;
-	m_inspector->m_partial_tracers_pool = new simple_lifo_queue<sinsp_partial_tracer>(128);
-
-	sinsp_tracerparser p(inspector);
-	p.test();
-	m_drop_event_flags = EF_NONE;
-}
-#else
 sinsp_parser::sinsp_parser(sinsp *inspector) :
 	m_inspector(inspector),
 	m_tmp_evt(m_inspector),
@@ -85,7 +67,6 @@ sinsp_parser::sinsp_parser(sinsp *inspector) :
 	init_metaevt(m_mesos_metaevents_state, PPME_MESOS_E, SP_EVT_BUF_SIZE);
 	m_drop_event_flags = EF_NONE;
 }
-#endif
 
 sinsp_parser::~sinsp_parser()
 {
@@ -775,7 +756,6 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 				// Remove the fd from the different tables
 				//
 				eparams.m_remove_from_table = true;
-				eparams.m_inspector = m_inspector;
 				eparams.m_tinfo = tinfo;
 				eparams.m_ts = evt->get_ts();
 
@@ -1160,7 +1140,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	// XXX this should absolutely not do a malloc, but get the item from a
 	// preallocated list
 	//
-	sinsp_threadinfo* tinfo = new sinsp_threadinfo(m_inspector);
+	sinsp_threadinfo* tinfo = m_inspector->build_threadinfo();
 
 	//
 	// Set the tid and parent tid
@@ -1838,13 +1818,6 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 	// Recompute the program hash
 	//
 	evt->m_tinfo->compute_program_hash();
-
-#ifdef HAS_ANALYZER
-	if(evt->m_tinfo->m_ainfo != NULL)
-	{
-		evt->m_tinfo->m_ainfo->clear_role_flags();
-	}
-#endif
 
 	//
 	// If there's a listener, invoke it
@@ -2855,8 +2828,8 @@ void sinsp_parser::erase_fd(erase_fd_params* params)
 	//
 	if(params->m_remove_from_table)
 	{
-		params->m_inspector->m_tid_of_fd_to_remove = params->m_tinfo->m_tid;
-		params->m_inspector->m_fds_to_remove->push_back(params->m_fd);
+		m_inspector->m_tid_of_fd_to_remove = params->m_tinfo->m_tid;
+		m_inspector->m_fds_to_remove->push_back(params->m_fd);
 	}
 
 	if(m_fd_listener)
@@ -2909,7 +2882,6 @@ void sinsp_parser::parse_close_exit(sinsp_evt *evt)
 		// Remove the fd from the different tables
 		//
 		eparams.m_remove_from_table = true;
-		eparams.m_inspector = m_inspector;
 		eparams.m_tinfo = evt->m_tinfo;
 		eparams.m_ts = evt->get_ts();
 
@@ -4029,7 +4001,6 @@ void sinsp_parser::parse_dup_exit(sinsp_evt *evt)
 			eparams.m_fd = retval;
 			eparams.m_fdinfo = oldfdinfo;
 			eparams.m_remove_from_table = false;
-			eparams.m_inspector = m_inspector;
 			eparams.m_tinfo = evt->m_tinfo;
 			eparams.m_ts = evt->get_ts();
 
@@ -4604,6 +4575,11 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
 		if(check_json_val_is_convertible(id, Json::stringValue, "id"))
 		{
 			container_info->m_id = id.asString();
+		}
+		const Json::Value& full_id = container["full_id"];
+		if(check_json_val_is_convertible(full_id, Json::stringValue, "full_id"))
+		{
+			container_info->m_full_id = full_id.asString();
 		}
 		const Json::Value& type = container["type"];
 		if(check_json_val_is_convertible(type, Json::uintValue, "type"))
