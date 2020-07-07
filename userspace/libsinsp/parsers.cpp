@@ -3597,9 +3597,9 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 			//
 			// Call the protocol decoder callbacks associated to this event
 			//
-			if(evt->m_fdinfo->m_callbaks)
+			if(evt->m_fdinfo->m_callbacks)
 			{
-				vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_callbaks->m_read_callbacks);
+				vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_callbacks->m_read_callbacks);
 
 				for(auto it = cbacks->begin(); it != cbacks->end(); ++it)
 				{
@@ -3685,9 +3685,9 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 			//
 			// Call the protocol decoder callbacks associated to this event
 			//
-			if(evt->m_fdinfo->m_callbaks)
+			if(evt->m_fdinfo->m_callbacks)
 			{
-				vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_callbaks->m_write_callbacks);
+				vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_callbacks->m_write_callbacks);
 
 				for(auto it = cbacks->begin(); it != cbacks->end(); ++it)
 				{
@@ -4652,6 +4652,12 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
 					container_info->m_id.c_str());
 				container_info->m_lookup_state = sinsp_container_lookup_state::FAILED;
 			}
+		}
+
+		const Json::Value& created_time = container["created_time"];
+		if(check_int64_json_is_convertible(created_time, "created_time"))
+		{
+			container_info->m_created_time = created_time.asInt64();
 		}
 
 #ifndef _WIN32
