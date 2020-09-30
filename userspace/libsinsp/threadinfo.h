@@ -76,17 +76,17 @@ public:
 	/*!
 	  \brief Return the name of the process containing this thread, e.g. "top".
 	*/
-	std::string get_comm();
+	std::string get_comm() const;
 
 	/*!
 	  \brief Return the name of the process containing this thread from argv[0], e.g. "/bin/top".
 	*/
-	std::string get_exe();
+	std::string get_exe() const;
 
 	/*!
 	  \brief Return the full executable path of the process containing this thread, e.g. "/bin/top".
 	*/
-	std::string get_exepath();
+	std::string get_exepath() const;
 
 	/*!
 	  \brief Return the working directory of the process containing this thread.
@@ -237,6 +237,13 @@ public:
 	// Return true if this thread is a part of a healthcheck,
 	// readiness probe, or liveness probe.
 	bool is_health_probe();
+
+	/*!
+	  \brief Translate a directory's file descriptor into its path
+	  \param dir_fd  A file descriptor for a directory
+	  \return  A path (or "" if failure)
+	 */
+	std::string get_path_for_dir_fd(int64_t dir_fd);
 
 	//
 	// Core state
@@ -454,6 +461,7 @@ VISIBILITY_PRIVATE
 class threadinfo_map_t
 {
 public:
+	typedef std::function<bool(const sinsp_threadinfo&)> const_visitor_t;
 	typedef std::function<bool(sinsp_threadinfo&)> visitor_t;
 	typedef std::shared_ptr<sinsp_threadinfo> ptr_t;
 
@@ -490,6 +498,18 @@ public:
 	inline void clear()
 	{
 		m_threads.clear();
+	}
+
+	bool const_loop(const_visitor_t callback) const
+	{
+		for (const auto& it : m_threads)
+		{
+			if (!callback(*it.second.get()))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	bool loop(visitor_t callback)

@@ -1,6 +1,6 @@
 /*
 
-Copyright (c) 2013-2018 Draios Inc. dba Sysdig.
+Copyright (c) 2020 Sysdig Inc
 
 This file is dual licensed under either the MIT or GPL 2. See MIT.txt
 or GPL2.txt for full copies of the license.
@@ -296,6 +296,9 @@ const struct syscall_evt_pair g_syscall_table[SYSCALL_TABLE_SIZE] = {
 #endif
 #ifdef __NR_seccomp
 	[__NR_seccomp - SYSCALL_TABLE_ID0] =                    {UF_USED, PPME_SYSCALL_SECCOMP_E, PPME_SYSCALL_SECCOMP_X},
+#endif
+#ifdef __NR_renameat2
+	[__NR_renameat2 - SYSCALL_TABLE_ID0] =                   {UF_USED, PPME_SYSCALL_RENAMEAT2_E, PPME_SYSCALL_RENAMEAT2_X},
 #endif
 };
 
@@ -848,6 +851,9 @@ const enum ppm_syscall_code g_syscall_code_routing_table[SYSCALL_TABLE_SIZE] = {
 #ifdef __NR_fadvise64
 	[__NR_fadvise64 - SYSCALL_TABLE_ID0] = PPM_SC_FADVISE64,
 #endif
+#ifdef __NR_renameat2
+	[__NR_renameat2 - SYSCALL_TABLE_ID0] = PPM_SC_RENAMEAT2,
+#endif
 };
 
 #ifdef CONFIG_IA32_EMULATION
@@ -1080,6 +1086,9 @@ const struct syscall_evt_pair g_syscall_ia32_table[SYSCALL_TABLE_SIZE] = {
 #endif
 #ifdef __NR_ia32_seccomp
 	[__NR_ia32_seccomp - SYSCALL_TABLE_ID0] =                    {UF_USED, PPME_SYSCALL_SECCOMP_E, PPME_SYSCALL_SECCOMP_X},
+#endif
+#ifdef __NR_ia32_renameat2
+	[__NR_ia32_renameat2 - SYSCALL_TABLE_ID0] =                  {UF_USED, PPME_SYSCALL_RENAMEAT2_E, PPME_SYSCALL_RENAMEAT2_X},
 #endif
 };
 
@@ -1633,6 +1642,9 @@ const enum ppm_syscall_code g_syscall_ia32_code_routing_table[SYSCALL_TABLE_SIZE
 #endif
 #ifdef __NR_ia32_fadvise64
 	[__NR_ia32_fadvise64 - SYSCALL_TABLE_ID0] = PPM_SC_FADVISE64,
+#endif
+#ifdef __NR_ia32_renameat2
+	[__NR_ia32_renameat2 - SYSCALL_TABLE_ID0] = PPM_SC_RENAMEAT2,
 #endif
 };
 

@@ -58,6 +58,9 @@ struct iovec;
 //
 // Core types
 //
+#ifndef __APPLE__
+#include <time.h>
+#endif
 #include "uthash.h"
 #include "../common/sysdig_types.h"
 #include "../../driver/ppm_events_public.h"
@@ -199,6 +202,7 @@ typedef struct scap_fdinfo
 		{
 			uint32_t open_flags; ///< Flags associated with the file
 			char fname[SCAP_MAX_PATH_SIZE]; ///< Name associated to this file
+			uint32_t mount_id; ///< The id of the vfs mount the file is in until we find dev major:minor
 			uint32_t dev; ///< Major/minor number of the device containing this file
 		} regularinfo; ///< Information specific to regular files
 		char fname[SCAP_MAX_PATH_SIZE];  ///< The name for file system FDs
@@ -543,9 +547,9 @@ struct udig_ring_buffer_status {
 typedef struct ppm_ring_buffer_info ppm_ring_buffer_info;
 
 int32_t udig_alloc_ring(int* ring_fd, uint8_t** ring, uint32_t *ringsize, char *error);
-int32_t udig_alloc_ring_descriptors(int* ring_descs_fd, 
-	struct ppm_ring_buffer_info** ring_info, 
-	struct udig_ring_buffer_status** ring_status, 
+int32_t udig_alloc_ring_descriptors(int* ring_descs_fd,
+	struct ppm_ring_buffer_info** ring_info,
+	struct udig_ring_buffer_status** ring_status,
 	char *error);
 void udig_free_ring(uint8_t* addr, uint32_t size);
 void udig_free_ring_descriptors(uint8_t* addr);
@@ -1046,7 +1050,9 @@ uint64_t scap_get_unexpected_block_readsize(scap_t* handle);
 int32_t scap_proc_add(scap_t* handle, uint64_t tid, scap_threadinfo* tinfo);
 int32_t scap_fd_add(scap_t *handle, scap_threadinfo* tinfo, uint64_t fd, scap_fdinfo* fdinfo);
 scap_dumper_t *scap_memory_dump_open(scap_t *handle, uint8_t* targetbuf, uint64_t targetbufsize);
+#ifdef USE_ZLIB
 int32_t compr(uint8_t* dest, uint64_t* destlen, const uint8_t* source, uint64_t sourcelen, int level);
+#endif
 uint8_t* scap_get_memorydumper_curpos(scap_dumper_t *d);
 int32_t scap_write_proc_fds(scap_t *handle, struct scap_threadinfo *tinfo, scap_dumper_t *d);
 int32_t scap_write_proclist_header(scap_t *handle, scap_dumper_t *d, uint32_t totlen);

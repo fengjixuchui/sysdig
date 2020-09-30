@@ -88,7 +88,7 @@ class SINSP_PUBLIC sinsp_evt_param
 {
 public:
 	char* m_val;	///< Pointer to the event parameter data.
-	uint16_t m_len; ///< Length os the parameter pointed by m_val.
+	uint16_t m_len; ///< Length of the parameter pointed by m_val.
 private:
 	inline void init(char* valptr, uint16_t len)
 	{
@@ -178,7 +178,7 @@ public:
 	/*!
 	  \brief Get the number of the CPU where this event was captured.
 	*/
-	inline int16_t get_cpuid()
+	inline int16_t get_cpuid() const
 	{
 		return m_cpuid;
 	}
@@ -188,7 +188,7 @@ public:
 
 	  \note For a list of event types, refer to \ref etypes.
 	*/
-	inline uint16_t get_type()
+	inline uint16_t get_type() const override
 	{
 		return m_pevt->type;
 	}
@@ -196,7 +196,7 @@ public:
 	/*!
 	  \brief Get the event's flags.
 	*/
-	inline ppm_event_flags get_info_flags()
+	inline ppm_event_flags get_info_flags() const
 	{
 		return m_info->flags;
 	}
@@ -204,7 +204,7 @@ public:
 	/*!
 	\brief Get the event's category.
 	*/
-	inline ppm_event_category get_info_category()
+	inline ppm_event_category get_info_category() const
 	{
 		return m_info->category;
 	}
@@ -212,14 +212,14 @@ public:
 	/*!
 	  \brief Return the event direction: in or out.
 	*/
-	event_direction get_direction();
+	event_direction get_direction() const;
 
 	/*!
 	  \brief Get the event timestamp.
 
 	  \return The event timestamp, in nanoseconds from epoch
 	*/
-	inline uint64_t get_ts()
+	inline uint64_t get_ts() const override
 	{
 		return m_pevt->ts;
 	}
@@ -227,12 +227,12 @@ public:
 	/*!
 	  \brief Return the event name string, e.g. 'open' or 'socket'.
 	*/
-	const char* get_name();
+	const char* get_name() const;
 
 	/*!
 	  \brief Return the event category.
 	*/
-	inline ppm_event_category get_category()
+	inline ppm_event_category get_category() const
 	{
 		return m_info->category;
 	}
@@ -261,7 +261,7 @@ public:
 		return m_fdinfo;
 	}
 
-	inline bool fdinfo_name_changed()
+	inline bool fdinfo_name_changed() const
 	{
 		return m_fdinfo_name_changed;
 	}
@@ -347,7 +347,7 @@ public:
 
 	bool simple_consumer_consider();
 
-	inline uint16_t get_source()
+	inline uint16_t get_source() const override
 	{
 		return ESRC_SINSP;
 	}
@@ -391,6 +391,9 @@ private:
 
 	void set_iosize(uint32_t size);
 	uint32_t get_iosize();
+
+	std::string get_base_dir(uint32_t id, sinsp_threadinfo *tinfo);
+
 	const char* get_param_as_str(uint32_t id, OUT const char** resolved_str, param_fmt fmt = PF_NORMAL);
 	Json::Value get_param_as_json(uint32_t id, OUT const char** resolved_str, param_fmt fmt = PF_NORMAL);
 

@@ -3179,7 +3179,7 @@ uint8_t *sinsp_filter_check_event::extract_abspath(sinsp_evt *evt, OUT uint32_t 
 	uint16_t etype = evt->get_type();
 
 	const char *dirfdarg = NULL, *patharg = NULL;
-	if(etype == PPME_SYSCALL_RENAMEAT_X)
+	if(etype == PPME_SYSCALL_RENAMEAT_X || etype == PPME_SYSCALL_RENAMEAT2_X)
 	{
 		if(m_argid == 0 || m_argid == 1)
 		{
@@ -7097,7 +7097,7 @@ uint8_t* sinsp_filter_check_fdlist::extract(sinsp_evt *evt, OUT uint32_t* len, b
 	}
 }
 
-#ifndef CYGWING_AGENT
+#if !defined(CYGWING_AGENT) && !defined(MINIMAL_BUILD)
 
 ///////////////////////////////////////////////////////////////////////////////
 // sinsp_filter_check_k8s implementation
@@ -7683,12 +7683,12 @@ uint8_t* sinsp_filter_check_k8s::extract(sinsp_evt *evt, OUT uint32_t* len, bool
 	return NULL;
 }
 
-#endif // CYGWING_AGENT
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // sinsp_filter_check_mesos implementation
 ///////////////////////////////////////////////////////////////////////////////
-#ifndef CYGWING_AGENT
+
 const filtercheck_field_info sinsp_filter_check_mesos_fields[] =
 {
 	{PT_CHARBUF, EPF_NONE, PF_NA, "mesos.task.name", "Mesos task name."},
@@ -7992,6 +7992,6 @@ uint8_t* sinsp_filter_check_mesos::extract(sinsp_evt *evt, OUT uint32_t* len, bo
 
 	return NULL;
 }
-#endif // CYGWING_AGENT
+#endif // !defined(CYGWING_AGENT) && !defined(MINIMAL_BUILD)
 
 #endif // HAS_FILTERING

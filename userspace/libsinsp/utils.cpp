@@ -22,7 +22,7 @@ limitations under the License.
 #include <limits.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#ifndef CYGWING_AGENT
+#ifdef __GLIBC__
 #include <execinfo.h>
 #endif
 #include <unistd.h>
@@ -51,7 +51,7 @@ limitations under the License.
 #include "chisel.h"
 #include "protodecoder.h"
 #include "uri.h"
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(MINIMAL_BUILD)
 #include "curl/curl.h"
 #endif
 
@@ -194,7 +194,6 @@ sinsp_initializer::~sinsp_initializer()
 
 //
 // errno to string conversion.
-// Only the first 40 error codes are currently implemented
 //
 const char* sinsp_utils::errno_to_str(int32_t code)
 {
@@ -280,44 +279,202 @@ const char* sinsp_utils::errno_to_str(int32_t code)
 		return "ENOTEMPTY";
 	case SE_ELOOP:
 		return "ELOOP";
-	case SE_ERESTARTSYS:
-		return "ERESTARTSYS";
-	case SE_ENETUNREACH:
-		return "ENETUNREACH";
-	case SE_EINPROGRESS:
-		return "EINPROGRESS";
-	case SE_ETIMEDOUT:
-		return "ETIMEDOUT";
-	case SE_ECONNRESET:
-		return "ECONNRESET";
-	case SE_ECONNREFUSED:
-		return "ECONNREFUSED";
-	case SE_ERESTARTNOHAND:
-		return "ERESTARTNOHAND";
-	case SE_EADDRNOTAVAIL:
-		return "EADDRNOTAVAIL";
-	case SE_ENOTCONN:
-		return "ENOTCONN";
-	case SE_ENETDOWN:
-		return "ENETDOWN";
-	case SE_EOPNOTSUPP:
-		return "EOPNOTSUPP";
+	case SE_ENOMSG:
+		return "ENOMSG";
+	case SE_EIDRM:
+		return "EIDRM";
+	case SE_ECHRNG:
+		return "ECHRNG";
+	case SE_EL2NSYNC:
+		return "EL2NSYNC";
+	case SE_EL3HLT:
+		return "EL3HLT";
+	case SE_EL3RST:
+		return "EL3RST";
+	case SE_ELNRNG:
+		return "ELNRNG";
+	case SE_EUNATCH:
+		return "EUNATCH";
+	case SE_ENOCSI:
+		return "ENOCSI";
+	case SE_EL2HLT:
+		return "EL2HLT";
+	case SE_EBADE:
+		return "EBADE";
+	case SE_EBADR:
+		return "EBADR";
+	case SE_EXFULL:
+		return "EXFULL";
+	case SE_ENOANO:
+		return "ENOANO";
+	case SE_EBADRQC:
+		return "EBADRQC";
+	case SE_EBADSLT:
+		return "EBADSLT";
+	case SE_EBFONT:
+		return "EBFONT";
+	case SE_ENOSTR:
+		return "ENOSTR";
+	case SE_ENODATA:
+		return "ENODATA";
+	case SE_ETIME:
+		return "ETIME";
+	case SE_ENOSR:
+		return "ENOSR";
+	case SE_ENONET:
+		return "ENONET";
+	case SE_ENOPKG:
+		return "ENOPKG";
+	case SE_EREMOTE:
+		return "EREMOTE";
+	case SE_ENOLINK:
+		return "ENOLINK";
+	case SE_EADV:
+		return "EADV";
+	case SE_ESRMNT:
+		return "ESRMNT";
+	case SE_ECOMM:
+		return "ECOMM";
+	case SE_EPROTO:
+		return "EPROTO";
+	case SE_EMULTIHOP:
+		return "EMULTIHOP";
+	case SE_EDOTDOT:
+		return "EDOTDOT";
+	case SE_EBADMSG:
+		return "EBADMSG";
+	case SE_EOVERFLOW:
+		return "EOVERFLOW";
+	case SE_ENOTUNIQ:
+		return "ENOTUNIQ";
+	case SE_EBADFD:
+		return "EBADFD";
+	case SE_EREMCHG:
+		return "EREMCHG";
+	case SE_ELIBACC:
+		return "ELIBACC";
+	case SE_ELIBBAD:
+		return "ELIBBAD";
+	case SE_ELIBSCN:
+		return "ELIBSCN";
+	case SE_ELIBMAX:
+		return "ELIBMAX";
+	case SE_ELIBEXEC:
+		return "ELIBEXEC";
+	case SE_EILSEQ:
+		return "EILSEQ";
+	case SE_ERESTART:
+		return "ERESTART";
+	case SE_ESTRPIPE:
+		return "ESTRPIPE";
+	case SE_EUSERS:
+		return "EUSERS";
 	case SE_ENOTSOCK:
 		return "ENOTSOCK";
-	case SE_ERESTART_RESTARTBLOCK:
-		return "ERESTART_RESTARTBLOCK";
-	case SE_EADDRINUSE:
-		return "EADDRINUSE";
+	case SE_EDESTADDRREQ:
+		return "EDESTADDRREQ";
+	case SE_EMSGSIZE:
+		return "EMSGSIZE";
 	case SE_EPROTOTYPE:
 		return "EPROTOTYPE";
-	case SE_EALREADY:
-		return "EALREADY";
-	case SE_ENOMEDIUM:
-		return "ENOMEDIUM";
-	case SE_ECANCELED:
-		return "ECANCELED";
+	case SE_ENOPROTOOPT:
+		return "ENOPROTOOPT";
 	case SE_EPROTONOSUPPORT:
 		return "EPROTONOSUPPORT";
+	case SE_ESOCKTNOSUPPORT:
+		return "ESOCKTNOSUPPORT";
+	case SE_EOPNOTSUPP:
+		return "EOPNOTSUPP";
+	case SE_EPFNOSUPPORT:
+		return "EPFNOSUPPORT";
+	case SE_EAFNOSUPPORT:
+		return "EAFNOSUPPORT";
+	case SE_EADDRINUSE:
+		return "EADDRINUSE";
+	case SE_EADDRNOTAVAIL:
+		return "EADDRNOTAVAIL";
+	case SE_ENETDOWN:
+		return "ENETDOWN";
+	case SE_ENETUNREACH:
+		return "ENETUNREACH";
+	case SE_ENETRESET:
+		return "ENETRESET";
+	case SE_ECONNABORTED:
+		return "ECONNABORTED";
+	case SE_ECONNRESET:
+		return "ECONNRESET";
+	case SE_ENOBUFS:
+		return "ENOBUFS";
+	case SE_EISCONN:
+		return "EISCONN";
+	case SE_ENOTCONN:
+		return "ENOTCONN";
+	case SE_ESHUTDOWN:
+		return "ESHUTDOWN";
+	case SE_ETOOMANYREFS:
+		return "ETOOMANYREFS";
+	case SE_ETIMEDOUT:
+		return "ETIMEDOUT";
+	case SE_ECONNREFUSED:
+		return "ECONNREFUSED";
+	case SE_EHOSTDOWN:
+		return "EHOSTDOWN";
+	case SE_EHOSTUNREACH:
+		return "EHOSTUNREACH";
+	case SE_EALREADY:
+		return "EALREADY";
+	case SE_EINPROGRESS:
+		return "EINPROGRESS";
+	case SE_ESTALE:
+		return "ESTALE";
+	case SE_EUCLEAN:
+		return "EUCLEAN";
+	case SE_ENOTNAM:
+		return "ENOTNAM";
+	case SE_ENAVAIL:
+		return "ENAVAIL";
+	case SE_EISNAM:
+		return "EISNAM";
+	case SE_EREMOTEIO:
+		return "EREMOTEIO";
+	case SE_EDQUOT:
+		return "EDQUOT";
+	case SE_ENOMEDIUM:
+		return "ENOMEDIUM";
+	case SE_EMEDIUMTYPE:
+		return "EMEDIUMTYPE";
+	case SE_ECANCELED:
+		return "ECANCELED";
+	case SE_ERESTARTSYS:
+		return "ERESTARTSYS";
+	case SE_ERESTARTNOINTR:
+		return "ERESTARTNOINTR";
+	case SE_ERESTARTNOHAND:
+		return "ERESTARTNOHAND";
+	case SE_ENOIOCTLCMD:
+		return "ENOIOCTLCMD";
+	case SE_ERESTART_RESTARTBLOCK:
+		return "ERESTART_RESTARTBLOCK";
+	case SE_EBADHANDLE:
+		return "EBADHANDLE";
+	case SE_ENOTSYNC:
+		return "ENOTSYNC";
+	case SE_EBADCOOKIE:
+		return "EBADCOOKIE";
+	case SE_ENOTSUPP:
+		return "ENOTSUPP";
+	case SE_ETOOSMALL:
+		return "ETOOSMALL";
+	case SE_ESERVERFAULT:
+		return "ESERVERFAULT";
+	case SE_EBADTYPE:
+		return "EBADTYPE";
+	case SE_EJUKEBOX:
+		return "EJUKEBOX";
+	case SE_EIOCBQUEUED:
+		return "EIOCBQUEUED";
+	case SE_EIOCBRETRY:
+		return "EIOCBRETRY";
 	default:
 		ASSERT(false);
 		return "";
@@ -780,6 +937,7 @@ bool sinsp_utils::glob_match(const char *pattern, const char *string)
 
 #ifndef CYGWING_AGENT
 #ifndef _WIN32
+#ifdef __GLIBC__
 void sinsp_utils::bt(void)
 {
 	static const char start[] = "BACKTRACE ------------";
@@ -801,6 +959,7 @@ void sinsp_utils::bt(void)
 
 	free(bt_syms);
 }
+#endif // __GLIBC__
 #endif // _WIN32
 #endif // CYGWING_AGENT
 
@@ -1306,6 +1465,8 @@ const char* param_type_to_string(ppm_param_type pt)
 		return "CHARBUFARRAY";
 	case PT_CHARBUF_PAIR_ARRAY:
 		return "CHARBUF_PAIR_ARRAY";
+	case PT_FSRELPATH:
+		return "FSRELPATH";
 	default:
 		ASSERT(false);
 		return "<NA>";
